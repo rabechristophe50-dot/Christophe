@@ -1,9 +1,27 @@
 import "dotenv/config";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import express from "express";
 import { analyzeAlert } from "./claude.js";
 
 const app = express();
 app.use(express.json());
+
+// Load trading rules from rules.json (fall back to rules.example.json, then {}).
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+function loadRules() {
+  for (const name of ["rules.json", "rules.example.json"]) {
+    try {
+      return JSON.parse(readFileSync(join(projectRoot, name), "utf8"));
+    } catch {
+      // try the next candidate
+    }
+  }
+  console.warn("[warn] no rules.json or rules.example.json found — running without rules.");
+  return {};
+}
+const rules = loadRules();
 
 const PORT = process.env.PORT || 3000;
 // Shared secret TradingView must include so random internet traffic can't post alerts.
@@ -35,7 +53,7 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    const decision = await analyzeAlert(alert, accountContext);
+    const decision = await analyzeAlert(alert, accountContext, rules);
     console.log(
       `[decision] ${decision.action} (conf ${decision.confidence}) — ${decision.rationale}`
     );

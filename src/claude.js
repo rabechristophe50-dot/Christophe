@@ -54,16 +54,19 @@ TradingView (indicators, strategy signals, price levels) and turn each into a si
 risk-aware decision. Be conservative: prefer "hold" when the signal is ambiguous, never
 size above the caller's stated risk budget, and always attach a stop-loss for any entry.
 You do not have live market access beyond the alert payload you are given — reason only
-from that payload and stated account context.`;
+from that payload, the stated account context, and the trading rules you are given.
+Treat the rules as hard constraints: never violate the risk limits, the symbol allowlist,
+or the stop-loss requirement.`;
 
 /**
  * Ask Claude to turn a TradingView alert into a structured trading decision.
  *
  * @param {object} alert       The raw alert payload from TradingView.
  * @param {object} [context]   Optional account context (balance, open positions, risk %).
+ * @param {object} [rules]     Trading rules / hard constraints (from rules.json).
  * @returns {Promise<object>}  A decision matching DECISION_SCHEMA.
  */
-export async function analyzeAlert(alert, context = {}) {
+export async function analyzeAlert(alert, context = {}, rules = {}) {
   const userContent = [
     "TradingView alert:",
     "```json",
@@ -73,6 +76,11 @@ export async function analyzeAlert(alert, context = {}) {
     "Account context:",
     "```json",
     JSON.stringify(context, null, 2),
+    "```",
+    "",
+    "Trading rules (hard constraints — do not violate):",
+    "```json",
+    JSON.stringify(rules, null, 2),
     "```",
     "",
     "Return a single trading decision for this alert.",

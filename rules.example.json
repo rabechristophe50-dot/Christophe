@@ -1,0 +1,21 @@
+{
+  "risk": {
+    "max_size_pct_per_trade": 25,
+    "max_open_positions": 3,
+    "require_stop_loss": true,
+    "min_confidence_to_trade": 0.55
+  },
+  "symbols": {
+    "allowlist": ["BTCUSD", "ETHUSD", "EURUSD"],
+    "blocklist": []
+  },
+  "sessions": {
+    "trade_only_hours_utc": [0, 24]
+  },
+  "guidance": [
+    "Prefer 'hold' when a signal comes from a single indicator with no confluence.",
+    "Never size above max_size_pct_per_trade, even at high confidence.",
+    "Reject any entry on a symbol not in the allowlist.",
+    "Always attach a stop-loss for buy/sell actions."
+  ]
+}

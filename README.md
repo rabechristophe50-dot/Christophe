@@ -20,11 +20,26 @@ parseable, so your execution layer never has to scrape prose.
 
 ```bash
 npm install
-cp .env.example .env      # then fill in ANTHROPIC_API_KEY and WEBHOOK_SECRET
-npm start                 # or: npm run dev  (auto-reload)
+cp .env.example .env          # then fill in ANTHROPIC_API_KEY and WEBHOOK_SECRET
+cp rules.example.json rules.json   # your local trading rules (git-ignored)
+npm start                     # or: npm run dev  (auto-reload)
 ```
 
 Requires Node.js 20+.
+
+## Trading rules (`rules.json`)
+
+`rules.json` holds hard constraints Claude must respect on every decision: risk limits,
+a symbol allowlist/blocklist, session hours, and free-text guidance. It's loaded at
+startup and passed into each analysis. Edit your local copy freely — it's git-ignored, so
+your rules stay private. `rules.example.json` is the committed template.
+
+```json
+{
+  "risk": { "max_size_pct_per_trade": 25, "require_stop_loss": true, "min_confidence_to_trade": 0.55 },
+  "symbols": { "allowlist": ["BTCUSD", "ETHUSD", "EURUSD"] }
+}
+```
 
 ## Endpoints
 

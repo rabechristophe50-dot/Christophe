@@ -1,6 +1,7 @@
 node_modules/
 .env
 .env.local
+rules.json
 npm-debug.log*
 *.log
 .DS_Store
