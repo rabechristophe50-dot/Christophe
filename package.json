@@ -1,0 +1,21 @@
+{
+  "name": "claude-vers-tradingview",
+  "version": "0.1.0",
+  "description": "Bridge that receives TradingView webhook alerts and uses Claude to turn them into structured, risk-checked trading decisions.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2"
+  },
+  "license": "MIT"
+}
