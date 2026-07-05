@@ -92,6 +92,29 @@ STR_COMMENT = "PureStraddleBot"
 
 
 # ===========================================================================
+# GRID BOT (grid_bot.py) - grille de cassure facon "GTS Gold Strategy"
+# ===========================================================================
+# Echelle de N Buy Stop au-dessus + N Sell Stop en-dessous, chacun avec TP/SL.
+GRID_LEVELS = 5                 # nombre d'ordres de chaque cote
+GRID_FIRST_STEP_PIPS = 30.0     # distance du prix au 1er ordre (30 = 0.30 $)
+GRID_STEP_PIPS = 30.0           # ecart entre 2 ordres (30 = 0.30 $)
+GRID_LOT = 0.01                 # lot par ordre
+GRID_TP_PIPS = 50.0             # TP par ordre (0 = aucun)
+GRID_SL_PIPS = 100.0            # SL par ordre (0 = aucun)
+
+GRID_USE_EQUITY_STOP = True     # fermer tout si perte flottante trop grande
+GRID_MAX_LOSS_MONEY = 50.0      # perte flottante max (devise du compte)
+GRID_TAKE_ALL_PROFIT = 0.0      # fermer tout si profit flottant atteint (0 = off)
+
+GRID_REBUILD_FLAT = True        # reconstruire la grille quand a plat
+GRID_REBUILD_EACH_BAR = False   # reconstruire aussi a chaque bougie (si a plat)
+GRID_MAX_SPREAD_PIPS = 40.0     # spread max pour poser la grille
+GRID_USE_TIME_FILTER = True     # respecter START_HOUR / END_HOUR
+GRID_MAGIC = 20260706           # magic dedie
+GRID_COMMENT = "PureGridBot"
+
+
+# ===========================================================================
 # NOTIFICATIONS TELEGRAM (optionnel, pour les deux bots)
 # ===========================================================================
 # 1. Cree un bot via @BotFather sur Telegram -> recupere le TOKEN.
