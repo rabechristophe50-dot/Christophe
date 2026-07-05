@@ -199,6 +199,61 @@ def close_all_positions():
 
 
 # ---------------------------------------------------------------------------
+def open_market(is_buy):
+    info = mt5.symbol_info(C.SYMBOL)
+    tick = mt5.symbol_info_tick(C.SYMBOL)
+    price = tick.ask if is_buy else tick.bid
+    slp = C.GRID_SL_PIPS * Ctx.pip
+    tpp = C.GRID_TP_PIPS * Ctx.pip
+
+    if is_buy:
+        sl = round(price - slp, Ctx.digits) if C.GRID_SL_PIPS > 0 else 0.0
+        tp = round(price + tpp, Ctx.digits) if C.GRID_TP_PIPS > 0 else 0.0
+        otype = mt5.ORDER_TYPE_BUY
+    else:
+        sl = round(price + slp, Ctx.digits) if C.GRID_SL_PIPS > 0 else 0.0
+        tp = round(price - tpp, Ctx.digits) if C.GRID_TP_PIPS > 0 else 0.0
+        otype = mt5.ORDER_TYPE_SELL
+
+    label = "BUY" if is_buy else "SELL"
+    if C.DRY_RUN:
+        log(f"[DRY_RUN] {label} marche @ {price} | SL={sl} TP={tp} lot={C.GRID_LOT}")
+        return
+
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": C.SYMBOL,
+        "volume": float(C.GRID_LOT),
+        "type": otype,
+        "price": price,
+        "sl": sl,
+        "tp": tp,
+        "deviation": C.DEVIATION,
+        "magic": C.GRID_MAGIC,
+        "comment": C.GRID_COMMENT,
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": filling_mode(info),
+    }
+    result = mt5.order_send(request)
+    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        rc = result.retcode if result else mt5.last_error()
+        log(f"Echec {label} marche @ {price} ({rc})")
+    else:
+        log(f"{label} marche ouvert @ {price} | SL={sl} TP={tp} lot={C.GRID_LOT}")
+        notify(f"🔀 {label} {C.SYMBOL} ouvert @ {price} | SL={sl} TP={tp}")
+
+
+def manage_dual_market(positions):
+    """Maintient GRID_DUAL_PER_SIDE positions Buy et Sell (hedge continu)."""
+    buys = sum(1 for p in positions if p.type == mt5.POSITION_TYPE_BUY)
+    sells = sum(1 for p in positions if p.type == mt5.POSITION_TYPE_SELL)
+    target = max(1, C.GRID_DUAL_PER_SIDE)
+    if buys < target:
+        open_market(True)
+    if sells < target:
+        open_market(False)
+
+
 def build_grid():
     tick = mt5.symbol_info_tick(C.SYMBOL)
     if tick is None:
@@ -278,7 +333,10 @@ def run():
                         and len(positions) >= C.GRID_MAX_OPEN_POSITIONS)
 
             if is_trading_time() and spread_pips() <= C.GRID_MAX_SPREAD_PIPS and not over_cap:
-                if C.GRID_CONTINUOUS:
+                if C.GRID_DUAL_MARKET:
+                    # MODE HEDGE : Buy ET Sell au marche en continu
+                    manage_dual_market(positions)
+                elif C.GRID_CONTINUOUS:
                     # MODE CONTINU : la grille suit le prix en temps reel
                     if not pendings:
                         build_grid()

@@ -43,6 +43,10 @@ input bool     InpUseEquityStop = true;          // Fermer tout si perte flottan
 input double   InpMaxLossMoney   = 50.0;         // Perte flottante max (devise du compte)
 input double   InpTakeAllProfit  = 0.0;          // Fermer tout si profit flottant atteint (0 = off)
 
+input group    "=== Mode HEDGE (deux sens en meme temps) ==="
+input bool     InpDualMarket     = true;         // Ouvrir Buy ET Sell au marche en continu (compte hedging)
+input int      InpDualPerSide    = 1;            // Positions a maintenir par sens (buy et sell)
+
 input group    "=== Comportement ==="
 input bool     InpContinuous     = true;         // MODE CONTINU : la grille suit le prix en temps reel
 input double   InpRecenterMovePips = 15.0;       // Re-centrer quand le prix a bouge de X pips
@@ -120,6 +124,13 @@ void OnTick()
    if(InpMaxOpenPositions > 0 && posCount >= InpMaxOpenPositions)
       return;
 
+   // === MODE HEDGE : Buy ET Sell au marche en continu ===
+   if(InpDualMarket)
+     {
+      ManageDualMarket();
+      return;
+     }
+
    if(InpContinuous)
      {
       // === MODE CONTINU : la grille suit le prix en temps reel ===
@@ -157,6 +168,67 @@ void OnTick()
          BuildGrid();
         }
      }
+  }
+
+//+------------------------------------------------------------------+
+//| Mode HEDGE : maintient InpDualPerSide positions Buy et Sell       |
+//+------------------------------------------------------------------+
+void ManageDualMarket()
+  {
+   int buys  = CountMyPositionsByType(POSITION_TYPE_BUY);
+   int sells = CountMyPositionsByType(POSITION_TYPE_SELL);
+
+   int target = (InpDualPerSide < 1) ? 1 : InpDualPerSide;
+
+   if(buys < target)
+      OpenMarket(true);
+   if(sells < target)
+      OpenMarket(false);
+  }
+
+//+------------------------------------------------------------------+
+//| Ouvre une position au marche (buy ou sell) avec TP/SL            |
+//+------------------------------------------------------------------+
+void OpenMarket(bool isBuy)
+  {
+   sym.RefreshRates();
+   double price = isBuy ? sym.Ask() : sym.Bid();
+   double slp = InpSL_Pips * g_pip;
+   double tpp = InpTP_Pips * g_pip;
+
+   double sl = 0.0, tp = 0.0;
+   if(isBuy)
+     {
+      if(InpSL_Pips > 0) sl = NormalizeDouble(price - slp, g_digits);
+      if(InpTP_Pips > 0) tp = NormalizeDouble(price + tpp, g_digits);
+      if(!trade.Buy(InpLotPerOrder, _Symbol, price, sl, tp, InpComment))
+         PrintFormat("Echec BUY marche @ %.2f code=%d", price, trade.ResultRetcode());
+     }
+   else
+     {
+      if(InpSL_Pips > 0) sl = NormalizeDouble(price + slp, g_digits);
+      if(InpTP_Pips > 0) tp = NormalizeDouble(price - tpp, g_digits);
+      if(!trade.Sell(InpLotPerOrder, _Symbol, price, sl, tp, InpComment))
+         PrintFormat("Echec SELL marche @ %.2f code=%d", price, trade.ResultRetcode());
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Compte les positions de cet EA d'un type donne                   |
+//+------------------------------------------------------------------+
+int CountMyPositionsByType(ENUM_POSITION_TYPE ptype)
+  {
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!position.SelectByTicket(ticket)) continue;
+      if(position.Symbol() == _Symbol && position.Magic() == InpMagicNumber &&
+         position.PositionType() == ptype)
+         count++;
+     }
+   return count;
   }
 
 //+------------------------------------------------------------------+

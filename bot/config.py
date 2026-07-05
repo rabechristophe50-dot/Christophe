@@ -106,6 +106,8 @@ GRID_USE_EQUITY_STOP = True     # fermer tout si perte flottante trop grande
 GRID_MAX_LOSS_MONEY = 50.0      # perte flottante max (devise du compte)
 GRID_TAKE_ALL_PROFIT = 0.0      # fermer tout si profit flottant atteint (0 = off)
 
+GRID_DUAL_MARKET = True         # MODE HEDGE : ouvrir Buy ET Sell au marche en continu (compte hedging)
+GRID_DUAL_PER_SIDE = 1          # positions a maintenir par sens (buy et sell)
 GRID_CONTINUOUS = True          # MODE CONTINU : la grille suit le prix en temps reel
 GRID_RECENTER_MOVE_PIPS = 15.0  # re-centrer quand le prix a bouge de X pips
 GRID_MAX_OPEN_POSITIONS = 20    # securite : positions ouvertes max (0 = illimite)
