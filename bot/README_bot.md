@@ -80,6 +80,24 @@ Le filtre horaire utilise l'heure **de ta machine**. Si l'heure serveur MT5 IC
 Markets diffère de ton PC, ajuste `START_HOUR` / `END_HOUR` en conséquence, ou
 mets `USE_TIME_FILTER = False` pour désactiver le filtre.
 
+## Notifications Telegram (optionnel)
+
+Les deux bots peuvent t'envoyer une notif Telegram à chaque trade.
+
+1. Sur Telegram, crée un bot via **@BotFather** → récupère le **TOKEN**.
+2. Écris un message à ton bot, puis ouvre
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` pour lire ton **chat_id**.
+3. Dans `config.py` :
+   ```
+   TG_ENABLED = True
+   TG_TOKEN   = "123456789:AA..."
+   TG_CHAT_ID = "987654321"
+   ```
+4. `pip install requests` (déjà dans `requirements.txt`).
+
+Si désactivé ou en cas d'erreur réseau, le bot continue de trader normalement —
+la notification ne bloque jamais le trading.
+
 ## ⚠️ Sécurité et avertissements
 
 - **DRY_RUN d'abord**, puis **compte DÉMO** plusieurs semaines, puis micro-lot réel.

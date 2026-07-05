@@ -89,3 +89,14 @@ STR_MAX_SPREAD_PIPS = 40.0      # spread max pour poser/gerer les ordres
 STR_USE_TIME_FILTER = True      # respecter START_HOUR / END_HOUR ci-dessus
 STR_MAGIC = 20260705            # magic dedie (different du scalper pour ne pas melanger)
 STR_COMMENT = "PureStraddleBot"
+
+
+# ===========================================================================
+# NOTIFICATIONS TELEGRAM (optionnel, pour les deux bots)
+# ===========================================================================
+# 1. Cree un bot via @BotFather sur Telegram -> recupere le TOKEN.
+# 2. Ecris un message a ton bot, puis va sur
+#    https://api.telegram.org/bot<TOKEN>/getUpdates pour lire ton chat_id.
+TG_ENABLED = False              # True pour activer les notifications
+TG_TOKEN = ""                   # ex : "123456789:AAExxxxxxxxxxxxxxxxxxxxxxxx"
+TG_CHAT_ID = ""                 # ex : "987654321"

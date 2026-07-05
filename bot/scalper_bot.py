@@ -33,6 +33,7 @@ except ImportError:
 import numpy as np
 
 import config as C
+from telegram_notify import notify, notify_startup
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +302,7 @@ def open_trade(direction, atr_value):
         log(f"Echec {direction.upper()} retcode={result.retcode} ({result.comment})")
     else:
         log(f"{direction.upper()} OUVERT | lot={lot} prix={price} SL={sl} TP={tp}")
+        notify(f"📈 {direction.upper()} {C.SYMBOL} ouvert | lot={lot} @ {price} | SL={sl} TP={tp}")
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +414,7 @@ def run():
         return
 
     log("Bot demarre. Ctrl+C pour arreter.")
+    notify_startup("Scalper bot", C.SYMBOL, C.TIMEFRAME)
     try:
         while True:
             # Gestion des positions ouvertes a chaque tour

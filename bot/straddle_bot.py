@@ -37,6 +37,7 @@ except ImportError:
 import numpy as np
 
 import config as C
+from telegram_notify import notify, notify_startup
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +198,7 @@ def place_pending(order_type, price, sl, tp, lot):
         log(f"Echec {label} @ {price} | retcode={rc} {cm}")
     else:
         log(f"{label} POSE @ {price} | SL={sl} TP={tp} lot={lot}")
+        notify(f"⏳ {label} {C.SYMBOL} pose @ {price} | SL={sl} TP={tp} lot={lot}")
 
 
 def cancel_pendings():
@@ -249,6 +251,7 @@ def run():
         return
 
     log("Straddle bot demarre. Ctrl+C pour arreter.")
+    notify_startup("Straddle bot", C.SYMBOL, C.STR_MODE)
     try:
         while True:
             positions = my_positions()
@@ -257,6 +260,9 @@ def run():
             # OCO : si une position est ouverte, on annule les ordres restants
             if positions and pendings:
                 log("Position ouverte -> annulation des ordres en attente restants (OCO)")
+                p = positions[0]
+                side = "BUY" if p.type == mt5.POSITION_TYPE_BUY else "SELL"
+                notify(f"✅ {side} {C.SYMBOL} declenche @ {p.price_open} | SL={p.sl} TP={p.tp} - autres ordres annules")
                 cancel_pendings()
 
             # Detection de nouvelle bougie
