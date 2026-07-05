@@ -106,8 +106,11 @@ GRID_USE_EQUITY_STOP = True     # fermer tout si perte flottante trop grande
 GRID_MAX_LOSS_MONEY = 50.0      # perte flottante max (devise du compte)
 GRID_TAKE_ALL_PROFIT = 0.0      # fermer tout si profit flottant atteint (0 = off)
 
-GRID_REBUILD_FLAT = True        # reconstruire la grille quand a plat
-GRID_REBUILD_EACH_BAR = False   # reconstruire aussi a chaque bougie (si a plat)
+GRID_CONTINUOUS = True          # MODE CONTINU : la grille suit le prix en temps reel
+GRID_RECENTER_MOVE_PIPS = 15.0  # re-centrer quand le prix a bouge de X pips
+GRID_MAX_OPEN_POSITIONS = 20    # securite : positions ouvertes max (0 = illimite)
+GRID_REBUILD_FLAT = True        # (mode classique) reconstruire quand a plat
+GRID_REBUILD_EACH_BAR = False   # (mode classique) reconstruire a chaque bougie
 GRID_MAX_SPREAD_PIPS = 40.0     # spread max pour poser la grille
 GRID_USE_TIME_FILTER = True     # respecter START_HOUR / END_HOUR
 GRID_MAGIC = 20260706           # magic dedie

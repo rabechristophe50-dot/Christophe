@@ -44,8 +44,11 @@ input double   InpMaxLossMoney   = 50.0;         // Perte flottante max (devise 
 input double   InpTakeAllProfit  = 0.0;          // Fermer tout si profit flottant atteint (0 = off)
 
 input group    "=== Comportement ==="
-input bool     InpRebuildFlat    = true;         // Reconstruire la grille quand a plat
-input bool     InpRebuildEachBar = false;        // Reconstruire aussi a chaque bougie (si a plat)
+input bool     InpContinuous     = true;         // MODE CONTINU : la grille suit le prix en temps reel
+input double   InpRecenterMovePips = 15.0;       // Re-centrer quand le prix a bouge de X pips
+input int      InpMaxOpenPositions = 20;         // Securite : positions ouvertes max (0 = illimite)
+input bool     InpRebuildFlat    = true;         // (mode classique) reconstruire quand a plat
+input bool     InpRebuildEachBar = false;        // (mode classique) reconstruire a chaque bougie
 input double   InpMaxSpreadPips  = 40.0;         // Spread max autorise (pips)
 input bool     InpUseTimeFilter  = true;         // Filtre horaire
 input int      InpStartHour      = 7;            // Heure debut (serveur)
@@ -62,6 +65,7 @@ double   g_point;
 double   g_pip;
 int      g_digits;
 datetime g_lastBarTime = 0;
+double   g_gridCenter = 0.0;   // prix central de la grille en cours
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -112,9 +116,35 @@ void OnTick()
    if(!IsTradingTime()) return;
    if(!IsSpreadOK())    return;
 
-   bool flat = (posCount == 0);
+   // Securite : plafond de positions ouvertes
+   if(InpMaxOpenPositions > 0 && posCount >= InpMaxOpenPositions)
+      return;
 
-   // Reconstruction de la grille quand le compte est a plat
+   if(InpContinuous)
+     {
+      // === MODE CONTINU : la grille suit le prix en temps reel ===
+      if(pendingCount == 0)
+        {
+         // Plus aucun ordre en attente -> on repose la grille immediatement
+         BuildGrid();
+        }
+      else
+        {
+         // Re-centrer la grille des que le prix a suffisamment bouge
+         sym.RefreshRates();
+         double mid = (sym.Ask() + sym.Bid()) / 2.0;
+         double driftPips = MathAbs(mid - g_gridCenter) / g_pip;
+         if(driftPips >= InpRecenterMovePips)
+           {
+            DeleteMyPending();
+            BuildGrid();
+           }
+        }
+      return;
+     }
+
+   // === MODE CLASSIQUE : reconstruction seulement quand a plat ===
+   bool flat = (posCount == 0);
    if(flat && InpRebuildFlat)
      {
       if(pendingCount == 0)
@@ -159,8 +189,9 @@ void BuildGrid()
       if(!trade.SellStop(InpLotPerOrder, sellPrice, _Symbol, sellSL, sellTP, ORDER_TIME_GTC, 0, InpComment))
          PrintFormat("Echec Sell Stop @ %.2f code=%d", sellPrice, trade.ResultRetcode());
      }
+   g_gridCenter = (ask + bid) / 2.0;
    PrintFormat("Grille posee : %d Buy Stop + %d Sell Stop autour de %.2f",
-               InpLevels, InpLevels, (ask + bid) / 2.0);
+               InpLevels, InpLevels, g_gridCenter);
   }
 
 //+------------------------------------------------------------------+

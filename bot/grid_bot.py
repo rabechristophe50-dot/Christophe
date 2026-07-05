@@ -40,6 +40,7 @@ class Ctx:
     digits = 0
     tf = None
     last_bar_time = None
+    grid_center = 0.0   # prix central de la grille en cours
 
 
 def log(msg):
@@ -226,6 +227,7 @@ def build_grid():
             placed += 1
 
     mid = (ask + bid) / 2.0
+    Ctx.grid_center = mid
     log(f"Grille posee : {C.GRID_LEVELS} Buy Stop + {C.GRID_LEVELS} Sell Stop autour de {mid:.2f}")
     notify(f"🧊 Grille {C.SYMBOL} posee : {C.GRID_LEVELS}x2 ordres autour de {mid:.2f}")
 
@@ -272,14 +274,31 @@ def run():
                     Ctx.last_bar_time = bt
                     new_bar = True
 
-            if is_trading_time() and spread_pips() <= C.GRID_MAX_SPREAD_PIPS:
-                flat = len(positions) == 0
-                if flat and C.GRID_REBUILD_FLAT:
+            over_cap = (C.GRID_MAX_OPEN_POSITIONS > 0
+                        and len(positions) >= C.GRID_MAX_OPEN_POSITIONS)
+
+            if is_trading_time() and spread_pips() <= C.GRID_MAX_SPREAD_PIPS and not over_cap:
+                if C.GRID_CONTINUOUS:
+                    # MODE CONTINU : la grille suit le prix en temps reel
                     if not pendings:
                         build_grid()
-                    elif C.GRID_REBUILD_EACH_BAR and new_bar:
-                        cancel_pendings()
-                        build_grid()
+                    else:
+                        tick = mt5.symbol_info_tick(C.SYMBOL)
+                        if tick is not None:
+                            mid = (tick.ask + tick.bid) / 2.0
+                            drift = abs(mid - Ctx.grid_center) / Ctx.pip
+                            if drift >= C.GRID_RECENTER_MOVE_PIPS:
+                                cancel_pendings()
+                                build_grid()
+                else:
+                    # MODE CLASSIQUE : reconstruction seulement quand a plat
+                    flat = len(positions) == 0
+                    if flat and C.GRID_REBUILD_FLAT:
+                        if not pendings:
+                            build_grid()
+                        elif C.GRID_REBUILD_EACH_BAR and new_bar:
+                            cancel_pendings()
+                            build_grid()
 
             time.sleep(C.POLL_SECONDS)
 
