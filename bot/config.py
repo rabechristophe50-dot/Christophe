@@ -63,3 +63,29 @@ ONE_TRADE_PER_BAR = True  # une seule entree par bougie
 DEVIATION = 20            # slippage max autorise (points)
 POLL_SECONDS = 5          # frequence de la boucle (secondes)
 DRY_RUN = False           # True = simule sans passer d'ordre reel (log seulement)
+
+
+# ===========================================================================
+# STRADDLE BOT (straddle_bot.py) - reglages independants
+# ===========================================================================
+# Deux ordres autour du prix, SL tres serre, TP au niveau oppose.
+#   MODE "reversion" : Buy Limit en bas / Sell Limit en haut.
+#                      TP = ligne opposee (le prix "revient"). SL serre au-dela.
+#   MODE "breakout"  : Buy Stop en haut / Sell Stop en bas.
+#                      TP dans le sens de la cassure. SL serre.
+STR_MODE = "reversion"          # "reversion" (defaut, TP au niveau oppose) ou "breakout"
+
+STR_ENTRY_DISTANCE_PIPS = 100.0 # distance des ordres au prix (100 pips = 1.00 $ sur l'or)
+STR_SL_PIPS = 20.0              # SL tres serre (20 pips = 0.20 $)
+STR_TP_PIPS = 150.0             # TP en mode breakout uniquement (en reversion : TP = ligne opposee)
+
+STR_LOT = 0.01                  # lot fixe
+STR_USE_RISK = False            # True = lot dynamique base sur le risque et le SL
+STR_RISK_PERCENT = 0.5          # risque par trade (% du capital) si STR_USE_RISK
+STR_MAX_POSITIONS = 1           # positions ouvertes max
+
+STR_RECENTER_EACH_BAR = True    # re-centre les ordres en attente a chaque nouvelle bougie
+STR_MAX_SPREAD_PIPS = 40.0      # spread max pour poser/gerer les ordres
+STR_USE_TIME_FILTER = True      # respecter START_HOUR / END_HOUR ci-dessus
+STR_MAGIC = 20260705            # magic dedie (different du scalper pour ne pas melanger)
+STR_COMMENT = "PureStraddleBot"
