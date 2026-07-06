@@ -27,10 +27,25 @@ input bool   InpAllowTrading  = true;             // false = mode simulation (lo
 input bool   InpShowDrawings  = true;             // afficher les lignes/labels de l'indicateur TV
 input string InpDrawFile      = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
 
+//--- Protection du capital -----------------------------------------
+enum ENUM_RISK_MODE
+  {
+   RISK_FIXED_LOT,   // lot fixe (InpDefaultLot / lot du signal)
+   RISK_PERCENT,     // risquer un % du capital par trade
+   RISK_MONEY        // risquer un montant fixe par trade
+  };
+input ENUM_RISK_MODE InpRiskMode      = RISK_FIXED_LOT; // dimensionnement du lot
+input double         InpRiskPercent   = 1.0;   // % du capital risque par trade (mode PERCENT)
+input double         InpRiskMoney     = 5.0;    // montant risque par trade (mode MONEY)
+input int            InpMaxTradesDay  = 0;      // max de trades par jour (0 = illimite)
+input int            InpMaxSpreadPts  = 0;      // spread max en points pour entrer (0 = pas de limite)
+
 //--- Global --------------------------------------------------------
 CTrade   trade;
 long     g_lastId = -1;   // dernier id de signal traite
 int      g_drawTick = 0;  // compteur pour rafraichir les dessins moins souvent
+int      g_tradesToday = 0;
+datetime g_dayStart = 0;  // debut du jour courant (pour le compteur)
 
 #define DRAW_PREFIX "TVD_"
 
@@ -122,6 +137,16 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
       return;
      }
 
+   // Garde-fou spread : ne pas entrer si le spread est trop large.
+   long spread = (long)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+   if(InpMaxSpreadPts > 0 && spread > InpMaxSpreadPts)
+     { PrintFormat("Spread %d > max %d pts sur %s -> trade ignore.", spread, InpMaxSpreadPts, symbol); return; }
+
+   // Limite de trades par jour.
+   ResetDailyCounter();
+   if(InpMaxTradesDay > 0 && g_tradesToday >= InpMaxTradesDay)
+     { PrintFormat("Limite de %d trades/jour atteinte -> trade ignore.", InpMaxTradesDay); return; }
+
    if(InpCloseOpposite)
       ClosePositionsByType(symbol, isBuy ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
 
@@ -152,12 +177,17 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
    if(tp > 0 && ((isBuy && tp <= price) || (!isBuy && tp >= price)))
      { PrintFormat("TP %.5f du mauvais cote (prix %.5f), ignore.", tp, price); tp = 0; }
 
-   lot = NormalizeLot(symbol, lot);
+   // Dimensionnement du lot : fixe, ou calcule selon le risque + la distance du SL.
+   lot = ComputeLot(symbol, lot, price, sl);
 
    bool ok = isBuy ? trade.Buy(lot, symbol, 0.0, sl, tp, "TVBridge")
                    : trade.Sell(lot, symbol, 0.0, sl, tp, "TVBridge");
    if(ok)
-      PrintFormat("OK %s %.2f %s @~%.5f (ret=%d)", action, lot, symbol, price, trade.ResultRetcode());
+     {
+      g_tradesToday++;
+      PrintFormat("OK %s %.2f %s @~%.5f (ret=%d) [trade %d du jour]",
+                  action, lot, symbol, price, trade.ResultRetcode(), g_tradesToday);
+     }
    else
       PrintFormat("ECHEC %s %s : ret=%d %s", action, symbol, trade.ResultRetcode(), trade.ResultRetcodeDescription());
   }
@@ -215,6 +245,53 @@ double NormalizeLot(string symbol, double lot)
    if(step > 0) lot = MathRound(lot / step) * step;
    if(lot < minLot) lot = minLot;
    if(lot > maxLot) lot = maxLot;
+   return lot;
+  }
+
+// Remet le compteur de trades a zero au changement de jour.
+void ResetDailyCounter()
+  {
+   MqlDateTime t;
+   TimeToStruct(TimeCurrent(), t);
+   t.hour = 0; t.min = 0; t.sec = 0;
+   datetime today = StructToTime(t);
+   if(today != g_dayStart)
+     {
+      g_dayStart = today;
+      g_tradesToday = 0;
+     }
+  }
+
+// Calcule le lot selon le mode de risque choisi.
+//  - RISK_FIXED_LOT : garde le lot fourni (signal / InpDefaultLot)
+//  - RISK_PERCENT/MONEY : lot tel que la perte au SL = risque voulu
+double ComputeLot(string symbol, double fallbackLot, double entry, double sl)
+  {
+   if(InpRiskMode == RISK_FIXED_LOT)
+      return NormalizeLot(symbol, fallbackLot);
+
+   // Sans SL valide, impossible de dimensionner par le risque -> lot de secours.
+   if(sl <= 0 || entry <= 0)
+     {
+      Print("Risque: pas de SL exploitable, utilisation du lot fixe.");
+      return NormalizeLot(symbol, fallbackLot);
+     }
+
+   double tickSize  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double slDist    = MathAbs(entry - sl);
+   if(tickSize <= 0 || tickValue <= 0 || slDist <= 0)
+      return NormalizeLot(symbol, fallbackLot);
+
+   double lossPerLot = (slDist / tickSize) * tickValue; // perte pour 1 lot si SL touche
+   if(lossPerLot <= 0) return NormalizeLot(symbol, fallbackLot);
+
+   double riskMoney = (InpRiskMode == RISK_PERCENT)
+                      ? AccountInfoDouble(ACCOUNT_BALANCE) * InpRiskPercent / 100.0
+                      : InpRiskMoney;
+
+   double lot = NormalizeLot(symbol, riskMoney / lossPerLot);
+   PrintFormat("Risque: %.2f a perdre / SL %.2f pts -> lot %.2f", riskMoney, slDist, lot);
    return lot;
   }
 

@@ -176,6 +176,26 @@ sur le graphique MT5** (rafraîchi toutes les ~5 s).
 s'alignent car TradingView et MT5 sont sur le même symbole (XAUUSD). Les objets
 portent le préfixe `TVD_` et sont nettoyés quand tu retires l'EA.
 
+## Protection du capital (réglages EA)
+
+Pour le trading réel, l'EA expose des garde-fous (tous optionnels, désactivés
+par défaut pour ne pas changer le comportement existant) :
+
+| Réglage EA | Rôle |
+|------------|------|
+| `InpRiskMode` | `RISK_FIXED_LOT` (défaut), `RISK_PERCENT` ou `RISK_MONEY`. En mode risque, le lot est calculé pour que la perte au SL = le risque voulu. |
+| `InpRiskPercent` | % du capital risqué par trade (mode PERCENT), ex. `1.0`. |
+| `InpRiskMoney` | Montant fixe risqué par trade (mode MONEY), ex. `5.0`. |
+| `InpMaxTradesDay` | Nombre max de trades par jour (`0` = illimité). |
+| `InpMaxSpreadPts` | Spread max en points pour entrer (`0` = pas de limite). Utile sur l'or. |
+
+Le dimensionnement par le risque a besoin d'un **SL** (fourni par l'indicateur) ;
+sans SL exploitable, l'EA retombe sur le lot fixe.
+
+> ⚠️ Un tableau d'indicateur affichant « 100% win / 0 SL » ne garantit rien : la
+> plupart des indicateurs comptent des stats partielles ou repeignent. Traite
+> toujours la perte comme possible — c'est le rôle de ces garde-fous.
+
 ## Sécurité / bonnes pratiques
 
 - **Teste toujours sur un compte DÉMO** d'abord (`InpAllowTrading = false` puis démo).
