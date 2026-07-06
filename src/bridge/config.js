@@ -15,6 +15,7 @@ const DEFAULTS = {
   indicator: {
     study_filter: '',
     mode: 'label',
+    signal_mode: 'on_new_label',
     buy_keywords: ['buy', 'long'],
     sell_keywords: ['sell', 'short'],
     flat_keywords: ['close', 'exit', 'flat'],

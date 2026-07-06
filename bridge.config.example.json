@@ -13,6 +13,8 @@
     "_comment": "study_filter = un bout du NOM de ton indicateur verrouille (laisse vide pour scanner tout). mode = comment lire le signal.",
     "study_filter": "",
     "mode": "label",
+    "_comment_signal_mode": "'on_new_label' = un trade a chaque nouveau signal (setups empiles) ; 'on_state_change' = un trade quand le sens change.",
+    "signal_mode": "on_new_label",
 
     "_comment_label": "mode 'label' : on lit les labels dessines par label.new() et on cherche ces mots-cles (insensible a la casse).",
     "buy_keywords": ["buy", "long", "bull", "▲", "🟢", "call"],

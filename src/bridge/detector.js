@@ -184,14 +184,37 @@ export class SignalDetector {
     else read = await this.readFromLabels();
 
     if (!read) return null;
-    if (read.labelId != null) this.lastLabelId = read.labelId;
 
-    if (read.state === this.lastState) return null; // pas de changement d'etat
+    // signal_mode :
+    //  - 'on_new_label'   : un trade a CHAQUE nouveau label d'entree (BUY HC,
+    //                       BUY, ... consecutifs = trades distincts). Ideal pour
+    //                       un indicateur qui empile les setups (ex. RUGA PRO).
+    //  - 'on_state_change': un trade seulement quand le SENS change (LONG<->SHORT).
+    const signalMode = mode === 'study_value' ? 'on_state_change'
+      : (this.ind.signal_mode || 'on_new_label');
+
+    // Securite au demarrage : on enregistre l'etat courant SANS trader, pour ne
+    // pas ouvrir une position sur le dernier signal HISTORIQUE (502 labels passes).
+    if (!this.initialized) {
+      this.initialized = true;
+      this.lastLabelId = read.labelId ?? null;
+      this.lastState = read.state;
+      return null;
+    }
+
+    let emit = false;
+    if (signalMode === 'on_new_label') {
+      if (read.labelId != null && read.labelId !== this.lastLabelId) emit = true;
+    } else if (read.state !== this.lastState) {
+      emit = true;
+    }
 
     const prev = this.lastState;
+    if (read.labelId != null) this.lastLabelId = read.labelId;
     this.lastState = read.state;
+    if (!emit) return null;
 
-    // Traduire la transition d'etat en action MT5.
+    // Traduire le signal en action MT5.
     let action;
     if (read.state === STATE.LONG) action = 'BUY';
     else if (read.state === STATE.SHORT) action = 'SELL';
