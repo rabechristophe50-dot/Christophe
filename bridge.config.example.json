@@ -46,7 +46,7 @@
     "_comment": "Ne trader QUE si TradingView est sur ce symbole et un de ces timeframes. Protege contre un changement accidentel de TF/symbole. TF: 5=M5, 15=M15, 60=H1, etc.",
     "enabled": true,
     "symbol": "XAUUSD",
-    "timeframes": ["5", "15"]
+    "timeframes": ["1", "5", "15"]
   },
 
   "order": {
