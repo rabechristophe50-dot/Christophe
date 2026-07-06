@@ -99,8 +99,10 @@ GRID_LEVELS = 5                 # nombre d'ordres de chaque cote
 GRID_FIRST_STEP_PIPS = 30.0     # distance du prix au 1er ordre (30 = 0.30 $)
 GRID_STEP_PIPS = 30.0           # ecart entre 2 ordres (30 = 0.30 $)
 GRID_LOT = 0.01                 # lot par ordre
-GRID_TP_PIPS = 50.0             # TP par ordre (0 = aucun)
+GRID_TP_PIPS = 50.0             # TP par ordre (utilise si RR desactive)
 GRID_SL_PIPS = 100.0            # SL par ordre (0 = aucun)
+GRID_USE_RR = True              # calculer le TP a partir du SL et du RR (TP = SL x RR)
+GRID_REWARD_RISK = 1.5          # RR cible (>= 1 pour ne pas etre perdant sur le ratio)
 
 GRID_USE_EQUITY_STOP = True     # fermer tout si perte flottante trop grande
 GRID_MAX_LOSS_MONEY = 50.0      # perte flottante max (devise du compte)

@@ -35,8 +35,12 @@ input int      InpLevels        = 5;             // Nombre d'ordres de chaque co
 input double   InpFirstStepPips  = 30.0;         // Distance du prix au 1er ordre (pips)
 input double   InpGridStepPips   = 30.0;         // Ecart entre 2 ordres (pips)
 input double   InpLotPerOrder    = 0.01;         // Lot par ordre
-input double   InpTP_Pips        = 50.0;         // Take Profit par ordre (pips, 0 = aucun)
+input double   InpTP_Pips        = 50.0;         // Take Profit par ordre (pips) - utilise si RR desactive
 input double   InpSL_Pips        = 100.0;        // Stop Loss par ordre (pips, 0 = aucun)
+
+input group    "=== Ratio Risque/Rendement (RR) ==="
+input bool     InpUseRR          = true;         // Calculer le TP a partir du SL et du RR (TP = SL x RR)
+input double   InpRewardRisk     = 1.5;          // RR cible (>= 1 pour ne pas etre perdant sur le ratio)
 
 input group    "=== Protection globale ==="
 input bool     InpUseEquityStop = true;          // Fermer tout si perte flottante trop grande
@@ -114,8 +118,12 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetMarginMode();
 
-   PrintFormat("GridEA initialise sur %s | pip=%.5f | %d niveaux, pas=%.0f pips | tendance=%s",
-               _Symbol, g_pip, InpLevels, InpGridStepPips, (InpTrendFilter?"ON":"OFF"));
+   double tpShow = (InpUseRR && InpSL_Pips > 0) ? InpSL_Pips * InpRewardRisk : InpTP_Pips;
+   double rrShow = (InpSL_Pips > 0) ? tpShow / InpSL_Pips : 0.0;
+   PrintFormat("GridEA initialise sur %s | pip=%.5f | tendance=%s | SL=%.0f TP=%.0f pips | RR=%.2f",
+               _Symbol, g_pip, (InpTrendFilter?"ON":"OFF"), InpSL_Pips, tpShow, rrShow);
+   if(rrShow > 0 && rrShow < 1.0)
+      Print("ATTENTION : RR < 1 -> tu risques plus que tu ne vises. Augmente InpRewardRisk ou baisse InpSL_Pips.");
    return(INIT_SUCCEEDED);
   }
 
@@ -228,6 +236,16 @@ void OnTick()
   }
 
 //+------------------------------------------------------------------+
+//| TP effectif en pips : calcule via le RR si active, sinon fixe    |
+//+------------------------------------------------------------------+
+double EffectiveTPPips()
+  {
+   if(InpUseRR && InpSL_Pips > 0.0)
+      return InpSL_Pips * InpRewardRisk;
+   return InpTP_Pips;
+  }
+
+//+------------------------------------------------------------------+
 //| Mode HEDGE : maintient InpDualPerSide positions Buy et Sell       |
 //+------------------------------------------------------------------+
 void ManageDualMarket()
@@ -262,21 +280,22 @@ void OpenMarket(bool isBuy)
   {
    sym.RefreshRates();
    double price = isBuy ? sym.Ask() : sym.Bid();
+   double tpPips = EffectiveTPPips();
    double slp = InpSL_Pips * g_pip;
-   double tpp = InpTP_Pips * g_pip;
+   double tpp = tpPips * g_pip;
 
    double sl = 0.0, tp = 0.0;
    if(isBuy)
      {
       if(InpSL_Pips > 0) sl = NormalizeDouble(price - slp, g_digits);
-      if(InpTP_Pips > 0) tp = NormalizeDouble(price + tpp, g_digits);
+      if(tpPips > 0)     tp = NormalizeDouble(price + tpp, g_digits);
       if(!trade.Buy(InpLotPerOrder, _Symbol, price, sl, tp, InpComment))
          PrintFormat("Echec BUY marche @ %.2f code=%d", price, trade.ResultRetcode());
      }
    else
      {
       if(InpSL_Pips > 0) sl = NormalizeDouble(price + slp, g_digits);
-      if(InpTP_Pips > 0) tp = NormalizeDouble(price - tpp, g_digits);
+      if(tpPips > 0)     tp = NormalizeDouble(price - tpp, g_digits);
       if(!trade.Sell(InpLotPerOrder, _Symbol, price, sl, tp, InpComment))
          PrintFormat("Echec SELL marche @ %.2f code=%d", price, trade.ResultRetcode());
      }
@@ -311,7 +330,8 @@ void BuildGrid()
 
    double first = InpFirstStepPips * g_pip;
    double step  = InpGridStepPips * g_pip;
-   double tp    = InpTP_Pips * g_pip;
+   double tpPips = EffectiveTPPips();
+   double tp    = tpPips * g_pip;
    double sl    = InpSL_Pips * g_pip;
 
    int dir = TrendDirection();                 // +1 hausse, -1 baisse, 0 neutre/off
@@ -325,8 +345,8 @@ void BuildGrid()
       if(allowBuy)
         {
          double buyPrice = NormalizeDouble(ask + first + i * step, g_digits);
-         double buyTP = (InpTP_Pips > 0) ? NormalizeDouble(buyPrice + tp, g_digits) : 0.0;
-         double buySL = (InpSL_Pips > 0) ? NormalizeDouble(buyPrice - sl, g_digits) : 0.0;
+         double buyTP = (tpPips > 0)      ? NormalizeDouble(buyPrice + tp, g_digits) : 0.0;
+         double buySL = (InpSL_Pips > 0)  ? NormalizeDouble(buyPrice - sl, g_digits) : 0.0;
          if(!trade.BuyStop(InpLotPerOrder, buyPrice, _Symbol, buySL, buyTP, ORDER_TIME_GTC, 0, InpComment))
             PrintFormat("Echec Buy Stop @ %.2f code=%d", buyPrice, trade.ResultRetcode());
         }
@@ -335,7 +355,7 @@ void BuildGrid()
       if(allowSell)
         {
          double sellPrice = NormalizeDouble(bid - first - i * step, g_digits);
-         double sellTP = (InpTP_Pips > 0) ? NormalizeDouble(sellPrice - tp, g_digits) : 0.0;
+         double sellTP = (tpPips > 0)     ? NormalizeDouble(sellPrice - tp, g_digits) : 0.0;
          double sellSL = (InpSL_Pips > 0) ? NormalizeDouble(sellPrice + sl, g_digits) : 0.0;
          if(!trade.SellStop(InpLotPerOrder, sellPrice, _Symbol, sellSL, sellTP, ORDER_TIME_GTC, 0, InpComment))
             PrintFormat("Echec Sell Stop @ %.2f code=%d", sellPrice, trade.ResultRetcode());

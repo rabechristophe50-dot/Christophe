@@ -86,7 +86,11 @@ def connect():
 
     acc = mt5.account_info()
     log(f"Connecte. Compte {acc.login} | {acc.server} | solde {acc.balance} {acc.currency}")
-    log(f"Symbole {C.SYMBOL} | pip={Ctx.pip} | {C.GRID_LEVELS} niveaux, pas={C.GRID_STEP_PIPS} pips")
+    tp_show = eff_tp_pips()
+    rr_show = (tp_show / C.GRID_SL_PIPS) if C.GRID_SL_PIPS > 0 else 0.0
+    log(f"Symbole {C.SYMBOL} | pip={Ctx.pip} | SL={C.GRID_SL_PIPS} TP={tp_show:.0f} pips | RR={rr_show:.2f}")
+    if 0 < rr_show < 1.0:
+        log("ATTENTION : RR < 1 -> tu risques plus que tu ne vises. Augmente GRID_REWARD_RISK.")
     if C.DRY_RUN:
         log("MODE DRY_RUN : aucun ordre reel ne sera passe (log seulement).")
     return True
@@ -121,6 +125,13 @@ def my_pending_orders():
 
 def floating_pnl():
     return sum(p.profit + p.swap for p in my_positions())
+
+
+def eff_tp_pips():
+    """TP effectif en pips : calcule via le RR si active, sinon fixe."""
+    if C.GRID_USE_RR and C.GRID_SL_PIPS > 0:
+        return C.GRID_SL_PIPS * C.GRID_REWARD_RISK
+    return C.GRID_TP_PIPS
 
 
 def _ema(values, period):
@@ -255,16 +266,17 @@ def open_market(is_buy):
     info = mt5.symbol_info(C.SYMBOL)
     tick = mt5.symbol_info_tick(C.SYMBOL)
     price = tick.ask if is_buy else tick.bid
+    tp_pips = eff_tp_pips()
     slp = C.GRID_SL_PIPS * Ctx.pip
-    tpp = C.GRID_TP_PIPS * Ctx.pip
+    tpp = tp_pips * Ctx.pip
 
     if is_buy:
         sl = round(price - slp, Ctx.digits) if C.GRID_SL_PIPS > 0 else 0.0
-        tp = round(price + tpp, Ctx.digits) if C.GRID_TP_PIPS > 0 else 0.0
+        tp = round(price + tpp, Ctx.digits) if tp_pips > 0 else 0.0
         otype = mt5.ORDER_TYPE_BUY
     else:
         sl = round(price + slp, Ctx.digits) if C.GRID_SL_PIPS > 0 else 0.0
-        tp = round(price - tpp, Ctx.digits) if C.GRID_TP_PIPS > 0 else 0.0
+        tp = round(price - tpp, Ctx.digits) if tp_pips > 0 else 0.0
         otype = mt5.ORDER_TYPE_SELL
 
     label = "BUY" if is_buy else "SELL"
@@ -329,7 +341,8 @@ def build_grid():
 
     first = C.GRID_FIRST_STEP_PIPS * Ctx.pip
     step = C.GRID_STEP_PIPS * Ctx.pip
-    tp = C.GRID_TP_PIPS * Ctx.pip
+    tp_pips = eff_tp_pips()
+    tp = tp_pips * Ctx.pip
     sl = C.GRID_SL_PIPS * Ctx.pip
 
     direction = trend_direction()               # +1 hausse, -1 baisse, 0 neutre/off
@@ -342,7 +355,7 @@ def build_grid():
         # BUY STOP au-dessus (seulement si tendance haussiere ou pas de filtre)
         if allow_buy:
             bp = ask + first + i * step
-            b_tp = bp + tp if C.GRID_TP_PIPS > 0 else 0.0
+            b_tp = bp + tp if tp_pips > 0 else 0.0
             b_sl = bp - sl if C.GRID_SL_PIPS > 0 else 0.0
             if place_pending(mt5.ORDER_TYPE_BUY_STOP, bp, b_sl, b_tp):
                 placed += 1
@@ -350,7 +363,7 @@ def build_grid():
         # SELL STOP en-dessous (seulement si tendance baissiere ou pas de filtre)
         if allow_sell:
             sp = bid - first - i * step
-            s_tp = sp - tp if C.GRID_TP_PIPS > 0 else 0.0
+            s_tp = sp - tp if tp_pips > 0 else 0.0
             s_sl = sp + sl if C.GRID_SL_PIPS > 0 else 0.0
             if place_pending(mt5.ORDER_TYPE_SELL_STOP, sp, s_sl, s_tp):
                 placed += 1
