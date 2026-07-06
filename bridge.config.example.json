@@ -1,0 +1,46 @@
+{
+  "poll_ms": 1000,
+
+  "_comment_symbol_map": "Symbole TradingView -> symbole du courtier MT5. Ex: 'BTCUSDT' cote TV peut s'appeler 'BTCUSD' chez ton broker.",
+  "symbol_map": {
+    "BTCUSDT": "BTCUSD",
+    "XAUUSD": "XAUUSD",
+    "NAS100": "NAS100"
+  },
+  "default_symbol": "EURUSD",
+
+  "indicator": {
+    "_comment": "study_filter = un bout du NOM de ton indicateur verrouille (laisse vide pour scanner tout). mode = comment lire le signal.",
+    "study_filter": "",
+    "mode": "label",
+
+    "_comment_label": "mode 'label' : on lit les labels dessines par label.new() et on cherche ces mots-cles (insensible a la casse).",
+    "buy_keywords": ["buy", "long", "bull", "▲", "🟢", "call"],
+    "sell_keywords": ["sell", "short", "bear", "▼", "🔴", "put"],
+    "flat_keywords": ["close", "exit", "flat", "tp hit", "sl hit"],
+
+    "_comment_study_value": "mode 'study_value' : on lit une valeur numerique de la fenetre de donnees (Data Window).",
+    "study_value": {
+      "field": "Signal",
+      "long_when": "> 0",
+      "short_when": "< 0",
+      "flat_when": "== 0"
+    }
+  },
+
+  "order": {
+    "lot": 0.10,
+    "sl_points": 0,
+    "tp_points": 0,
+    "close_opposite": true,
+    "_comment": "sl_points/tp_points en points broker (0 = desactive). close_opposite ferme la position inverse avant d'ouvrir."
+  },
+
+  "sink": {
+    "file": true,
+    "_comment_file_path": "Chemin ou ecrire le signal. IDEAL: le dossier Common\\Files de MT5 pour que l'EA le lise directement.",
+    "file_path": "./mt5-signal/tv_signal.json",
+    "http": true,
+    "http_port": 8787
+  }
+}

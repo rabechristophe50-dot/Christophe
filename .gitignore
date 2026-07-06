@@ -4,3 +4,8 @@ scripts/current.pine
 temp_*
 *.log
 discovery-log.json
+
+# Pont MT5 : fichiers generes
+mt5-signal/*.json
+mt5-signal/*.tmp
+bridge.config.json
