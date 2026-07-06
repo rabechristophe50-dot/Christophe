@@ -159,6 +159,22 @@ Ton indicateur affiche **BUY, SELL, SL et TP** — le pont exploite tout :
 Si l'indicateur ne fournit pas de niveau, l'EA retombe sur `order.sl_points` /
 `tp_points` (secours en points), sinon aucun SL/TP.
 
+## Garde-fou timeframe / symbole
+
+Les signaux viennent du **graphique TradingView affiché** : son timeframe et son
+symbole déterminent ce qui est tradé. La section `guard` empêche un trade si TV
+n'est pas sur le bon réglage — protection contre un changement accidentel.
+
+```json
+"guard": { "enabled": true, "symbol": "XAUUSD", "timeframes": ["5", "15"] }
+```
+
+- `timeframes` : résolutions autorisées (`5`=M5, `15`=M15, `60`=H1, `D`=jour…).
+- Un signal hors de ces réglages est **ignoré** (loggé `SIGNAL IGNORE`).
+- Changer de timeframe **re-calibre** le détecteur : aucun trade n'est déclenché
+  par le simple passage M5 ↔ M15.
+- Le timeframe de MT5 n'a aucun rôle : toute la décision vient de TradingView.
+
 ## Miroir visuel (afficher l'indicateur sur MT5)
 
 Le code Pine étant verrouillé, on ne peut pas recréer l'indicateur en MQL5. En

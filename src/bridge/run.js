@@ -12,22 +12,43 @@ import { loadConfig } from './config.js';
 import { SignalDetector } from './detector.js';
 import { SignalSink, writeTextAtomic } from './sink.js';
 import { collectDrawings } from './drawings.js';
-import { data } from '../core/index.js';
+import { data, chart } from '../core/index.js';
+
+function cleanSymbol(tvSymbol) {
+  if (!tvSymbol) return '';
+  return tvSymbol.includes(':') ? tvSymbol.split(':').pop() : tvSymbol;
+}
 
 function mapSymbol(cfg, tvSymbol) {
   if (!tvSymbol) return cfg.default_symbol;
-  // Le symbole TV peut etre "BINANCE:BTCUSDT" -> on garde la partie apres ":".
-  const clean = tvSymbol.includes(':') ? tvSymbol.split(':').pop() : tvSymbol;
+  const clean = cleanSymbol(tvSymbol);
   return cfg.symbol_map[clean] || cfg.symbol_map[tvSymbol] || clean;
 }
 
-async function currentTvSymbol() {
+/** Lit symbole + timeframe (resolution) du graphique TV affiche. */
+async function currentChart() {
   try {
-    const q = await data.getQuote({});
-    return q?.symbol || null;
+    const st = await chart.getState();
+    return { symbol: st?.symbol || null, resolution: st?.resolution != null ? String(st.resolution) : null };
   } catch {
-    return null;
+    return { symbol: null, resolution: null };
   }
+}
+
+/** Verifie que le graphique TV est sur le bon symbole ET un timeframe autorise. */
+function guardCheck(guard, symbol, resolution) {
+  if (!guard || !guard.enabled) return { ok: true };
+  const tfs = (guard.timeframes || []).map(String);
+  if (tfs.length && (resolution == null || !tfs.includes(resolution))) {
+    return { ok: false, reason: `timeframe ${resolution || '?'} non autorise (attendu: ${tfs.join('/')})` };
+  }
+  if (guard.symbol) {
+    const cs = cleanSymbol(symbol).toUpperCase();
+    if (cs !== guard.symbol.toUpperCase() && !cs.includes(guard.symbol.toUpperCase())) {
+      return { ok: false, reason: `symbole ${cs || '?'} != ${guard.symbol}` };
+    }
+  }
+  return { ok: true };
 }
 
 async function main() {
@@ -55,10 +76,28 @@ async function main() {
   if (drawCfg.enabled) console.log(`[bridge] Miroir visuel: ${drawPath}`);
   let lastDraw = 0;
 
+  // Garde-fou : ne trader que le bon symbole + timeframes autorises (M5/M15).
+  const guard = cfg.guard || {};
+  if (guard.enabled) {
+    console.log(`[bridge] Garde-fou: ${guard.symbol || '(tout symbole)'} en ${(guard.timeframes || []).join('/') || '(tout TF)'}`);
+  }
+  let lastRes = null;
+
   let consecutiveErrors = 0;
   while (running) {
     const t0 = Date.now();
     try {
+      const { symbol: tvSym, resolution: tvRes } = await currentChart();
+
+      // Changement de timeframe -> re-caler le detecteur sans trader le passage.
+      if (tvRes !== null && tvRes !== lastRes) {
+        if (lastRes !== null) {
+          detector.initialized = false;
+          console.log(`[bridge] Timeframe change: ${lastRes} -> ${tvRes} (re-calibrage, aucun trade sur le changement)`);
+        }
+        lastRes = tvRes;
+      }
+
       const signal = await detector.poll();
       consecutiveErrors = 0;
 
@@ -70,7 +109,13 @@ async function main() {
         } catch (e) { /* miroir optionnel : on n'interrompt pas le trading */ }
       }
       if (signal) {
-        const tvSym = await currentTvSymbol();
+        // Garde-fou : refuser si TV n'est pas sur le bon symbole / timeframe.
+        const g = guardCheck(guard, tvSym, tvRes);
+        if (!g.ok) {
+          const stamp = new Date().toISOString().slice(11, 19);
+          console.warn(`[${stamp}] SIGNAL IGNORE (${signal.action}) : ${g.reason}`);
+          continue;
+        }
         const mtSym = mapSymbol(cfg, tvSym);
         const published = sink.publish({
           action: signal.action,

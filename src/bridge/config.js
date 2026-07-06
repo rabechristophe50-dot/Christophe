@@ -29,6 +29,7 @@ const DEFAULTS = {
     use_label_price: true,
   },
   order: { lot: 0.1, sl_points: 0, tp_points: 0, close_opposite: true },
+  guard: { enabled: true, symbol: 'XAUUSD', timeframes: ['5', '15'] },
   sink: { file: true, file_path: './mt5-signal/tv_signal.json', http: true, http_port: 8787 },
   drawings: { enabled: true, file_path: '', refresh_ms: 3000, max_labels: 60 },
 };
