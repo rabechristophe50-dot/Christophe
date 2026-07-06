@@ -104,7 +104,16 @@ async function main() {
       if (drawCfg.enabled && t0 - lastDraw >= (drawCfg.refresh_ms || 3000)) {
         lastDraw = t0;
         try {
-          const text = await collectDrawings({ study_filter: cfg.indicator.study_filter, max_labels: drawCfg.max_labels }, { data });
+          const text = await collectDrawings({
+            study_filter: cfg.indicator.study_filter,
+            max_labels: drawCfg.max_labels,
+            mode: drawCfg.mode || 'active',
+            buy_keywords: cfg.indicator.buy_keywords,
+            sell_keywords: cfg.indicator.sell_keywords,
+            exclude_keywords: cfg.indicator.exclude_keywords,
+            sl_keywords: cfg.sltp?.sl_keywords,
+            tp_keywords: cfg.sltp?.tp_keywords,
+          }, { data });
           writeTextAtomic(drawPath, text);
         } catch (e) { /* miroir optionnel : on n'interrompt pas le trading */ }
       }

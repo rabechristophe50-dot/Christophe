@@ -58,8 +58,9 @@
   },
 
   "drawings": {
-    "_comment": "Miroir visuel : recopie les lignes/labels de l'indicateur sur le graphique MT5. file_path vide = meme dossier que le signal, fichier tv_draw.txt.",
+    "_comment": "Miroir visuel sur MT5. mode 'active' = seulement le dernier signal + son SL/TP (recommande). mode 'all' = tout l'historique recent.",
     "enabled": true,
+    "mode": "active",
     "file_path": "",
     "refresh_ms": 3000,
     "max_labels": 60
