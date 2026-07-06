@@ -123,6 +123,58 @@ def floating_pnl():
     return sum(p.profit + p.swap for p in my_positions())
 
 
+def _ema(values, period):
+    values = np.asarray(values, dtype=float)
+    alpha = 2.0 / (period + 1.0)
+    out = np.empty_like(values)
+    out[0] = values[0]
+    for i in range(1, len(values)):
+        out[i] = alpha * values[i] + (1.0 - alpha) * out[i - 1]
+    return out
+
+
+def trend_direction():
+    """+1 hausse, -1 baisse, 0 neutre / filtre desactive."""
+    if not C.GRID_TREND_FILTER:
+        return 0
+    bars = max(C.GRID_TREND_SLOW_EMA + 20, 80)
+    rates = mt5.copy_rates_from_pos(C.SYMBOL, Ctx.tf, 0, bars)
+    if rates is None or len(rates) < C.GRID_TREND_SLOW_EMA + 2:
+        return 0
+    closes = rates["close"]
+    fast = _ema(closes, C.GRID_TREND_FAST_EMA)
+    slow = _ema(closes, C.GRID_TREND_SLOW_EMA)
+    if fast[-2] > slow[-2]:
+        return 1
+    if fast[-2] < slow[-2]:
+        return -1
+    return 0
+
+
+def close_by_type(is_buy):
+    ptype = mt5.POSITION_TYPE_BUY if is_buy else mt5.POSITION_TYPE_SELL
+    for p in my_positions():
+        if p.type != ptype:
+            continue
+        if C.DRY_RUN:
+            log(f"[DRY_RUN] fermeture {'BUY' if is_buy else 'SELL'} #{p.ticket} (contre-tendance)")
+            continue
+        info = mt5.symbol_info(C.SYMBOL)
+        tick = mt5.symbol_info_tick(C.SYMBOL)
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": C.SYMBOL,
+            "volume": p.volume,
+            "type": mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY,
+            "position": p.ticket,
+            "price": tick.bid if is_buy else tick.ask,
+            "deviation": C.DEVIATION,
+            "magic": C.GRID_MAGIC,
+            "type_filling": filling_mode(info),
+        }
+        mt5.order_send(req)
+
+
 def filling_mode(info):
     f = info.filling_mode
     if f & 1:
@@ -244,13 +296,28 @@ def open_market(is_buy):
 
 
 def manage_dual_market(positions):
-    """Maintient GRID_DUAL_PER_SIDE positions Buy et Sell (hedge continu)."""
+    """Maintient GRID_DUAL_PER_SIDE positions, filtre par la tendance."""
     buys = sum(1 for p in positions if p.type == mt5.POSITION_TYPE_BUY)
     sells = sum(1 for p in positions if p.type == mt5.POSITION_TYPE_SELL)
     target = max(1, C.GRID_DUAL_PER_SIDE)
-    if buys < target:
+
+    direction = trend_direction()               # +1 hausse, -1 baisse, 0 neutre/off
+    trend_active = C.GRID_TREND_FILTER and direction != 0
+    allow_buy = (not trend_active) or direction == 1
+    allow_sell = (not trend_active) or direction == -1
+
+    # Fermer le cote a contre-tendance quand la tendance s'inverse
+    if trend_active and C.GRID_CLOSE_ON_FLIP:
+        if direction == 1 and sells > 0:
+            close_by_type(is_buy=False)
+            sells = 0
+        if direction == -1 and buys > 0:
+            close_by_type(is_buy=True)
+            buys = 0
+
+    if allow_buy and buys < target:
         open_market(True)
-    if sells < target:
+    if allow_sell and sells < target:
         open_market(False)
 
 
@@ -265,21 +332,28 @@ def build_grid():
     tp = C.GRID_TP_PIPS * Ctx.pip
     sl = C.GRID_SL_PIPS * Ctx.pip
 
+    direction = trend_direction()               # +1 hausse, -1 baisse, 0 neutre/off
+    trend_active = C.GRID_TREND_FILTER and direction != 0
+    allow_buy = (not trend_active) or direction == 1
+    allow_sell = (not trend_active) or direction == -1
+
     placed = 0
     for i in range(C.GRID_LEVELS):
-        # BUY STOP au-dessus
-        bp = ask + first + i * step
-        b_tp = bp + tp if C.GRID_TP_PIPS > 0 else 0.0
-        b_sl = bp - sl if C.GRID_SL_PIPS > 0 else 0.0
-        if place_pending(mt5.ORDER_TYPE_BUY_STOP, bp, b_sl, b_tp):
-            placed += 1
+        # BUY STOP au-dessus (seulement si tendance haussiere ou pas de filtre)
+        if allow_buy:
+            bp = ask + first + i * step
+            b_tp = bp + tp if C.GRID_TP_PIPS > 0 else 0.0
+            b_sl = bp - sl if C.GRID_SL_PIPS > 0 else 0.0
+            if place_pending(mt5.ORDER_TYPE_BUY_STOP, bp, b_sl, b_tp):
+                placed += 1
 
-        # SELL STOP en-dessous
-        sp = bid - first - i * step
-        s_tp = sp - tp if C.GRID_TP_PIPS > 0 else 0.0
-        s_sl = sp + sl if C.GRID_SL_PIPS > 0 else 0.0
-        if place_pending(mt5.ORDER_TYPE_SELL_STOP, sp, s_sl, s_tp):
-            placed += 1
+        # SELL STOP en-dessous (seulement si tendance baissiere ou pas de filtre)
+        if allow_sell:
+            sp = bid - first - i * step
+            s_tp = sp - tp if C.GRID_TP_PIPS > 0 else 0.0
+            s_sl = sp + sl if C.GRID_SL_PIPS > 0 else 0.0
+            if place_pending(mt5.ORDER_TYPE_SELL_STOP, sp, s_sl, s_tp):
+                placed += 1
 
     mid = (ask + bid) / 2.0
     Ctx.grid_center = mid

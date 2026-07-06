@@ -106,6 +106,10 @@ GRID_USE_EQUITY_STOP = True     # fermer tout si perte flottante trop grande
 GRID_MAX_LOSS_MONEY = 50.0      # perte flottante max (devise du compte)
 GRID_TAKE_ALL_PROFIT = 0.0      # fermer tout si profit flottant atteint (0 = off)
 
+GRID_TREND_FILTER = True        # suivre la tendance (EMA) : achat en hausse, vente en baisse
+GRID_TREND_FAST_EMA = 20        # EMA rapide (detection de tendance)
+GRID_TREND_SLOW_EMA = 50        # EMA lente (detection de tendance)
+GRID_CLOSE_ON_FLIP = True       # fermer le cote a contre-tendance quand la tendance s'inverse
 GRID_DUAL_MARKET = True         # MODE HEDGE : ouvrir Buy ET Sell au marche en continu (compte hedging)
 GRID_DUAL_PER_SIDE = 1          # positions a maintenir par sens (buy et sell)
 GRID_CONTINUOUS = True          # MODE CONTINU : la grille suit le prix en temps reel

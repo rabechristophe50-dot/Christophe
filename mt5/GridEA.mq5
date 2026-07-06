@@ -43,6 +43,12 @@ input bool     InpUseEquityStop = true;          // Fermer tout si perte flottan
 input double   InpMaxLossMoney   = 50.0;         // Perte flottante max (devise du compte)
 input double   InpTakeAllProfit  = 0.0;          // Fermer tout si profit flottant atteint (0 = off)
 
+input group    "=== Filtre de tendance ==="
+input bool     InpTrendFilter    = true;         // Suivre la tendance (EMA) : achat en hausse, vente en baisse
+input int      InpTrendFastEMA   = 20;           // EMA rapide (detection de tendance)
+input int      InpTrendSlowEMA   = 50;           // EMA lente (detection de tendance)
+input bool     InpCloseOnFlip    = true;         // Fermer le cote a contre-tendance quand la tendance s'inverse
+
 input group    "=== Mode HEDGE (deux sens en meme temps) ==="
 input bool     InpDualMarket     = true;         // Ouvrir Buy ET Sell au marche en continu (compte hedging)
 input int      InpDualPerSide    = 1;            // Positions a maintenir par sens (buy et sell)
@@ -70,6 +76,8 @@ double   g_pip;
 int      g_digits;
 datetime g_lastBarTime = 0;
 double   g_gridCenter = 0.0;   // prix central de la grille en cours
+int      g_hFastEMA = INVALID_HANDLE;
+int      g_hSlowEMA = INVALID_HANDLE;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -90,14 +98,63 @@ int OnInit()
       return(INIT_FAILED);
      }
 
+   if(InpTrendFilter)
+     {
+      g_hFastEMA = iMA(_Symbol, PERIOD_CURRENT, InpTrendFastEMA, 0, MODE_EMA, PRICE_CLOSE);
+      g_hSlowEMA = iMA(_Symbol, PERIOD_CURRENT, InpTrendSlowEMA, 0, MODE_EMA, PRICE_CLOSE);
+      if(g_hFastEMA == INVALID_HANDLE || g_hSlowEMA == INVALID_HANDLE)
+        {
+         Print("Erreur creation des EMA de tendance");
+         return(INIT_FAILED);
+        }
+     }
+
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetDeviationInPoints(20);
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetMarginMode();
 
-   PrintFormat("GridEA initialise sur %s | pip=%.5f | %d niveaux, pas=%.0f pips",
-               _Symbol, g_pip, InpLevels, InpGridStepPips);
+   PrintFormat("GridEA initialise sur %s | pip=%.5f | %d niveaux, pas=%.0f pips | tendance=%s",
+               _Symbol, g_pip, InpLevels, InpGridStepPips, (InpTrendFilter?"ON":"OFF"));
    return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+  {
+   if(g_hFastEMA != INVALID_HANDLE) IndicatorRelease(g_hFastEMA);
+   if(g_hSlowEMA != INVALID_HANDLE) IndicatorRelease(g_hSlowEMA);
+  }
+
+//+------------------------------------------------------------------+
+//| Direction de la tendance : +1 hausse, -1 baisse, 0 neutre/off    |
+//+------------------------------------------------------------------+
+int TrendDirection()
+  {
+   if(!InpTrendFilter)
+      return 0;
+   double f[2], s[2];
+   if(CopyBuffer(g_hFastEMA, 0, 0, 2, f) < 2) return 0;
+   if(CopyBuffer(g_hSlowEMA, 0, 0, 2, s) < 2) return 0;
+   if(f[1] > s[1]) return 1;    // EMA rapide au-dessus -> hausse
+   if(f[1] < s[1]) return -1;   // EMA rapide en-dessous -> baisse
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
+//| Ferme toutes les positions d'un type donne                       |
+//+------------------------------------------------------------------+
+void CloseByType(ENUM_POSITION_TYPE ptype)
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!position.SelectByTicket(ticket)) continue;
+      if(position.Symbol() == _Symbol && position.Magic() == InpMagicNumber &&
+         position.PositionType() == ptype)
+         trade.PositionClose(ticket);
+     }
   }
 
 //+------------------------------------------------------------------+
@@ -180,9 +237,21 @@ void ManageDualMarket()
 
    int target = (InpDualPerSide < 1) ? 1 : InpDualPerSide;
 
-   if(buys < target)
+   int dir = TrendDirection();                 // +1 hausse, -1 baisse, 0 neutre/off
+   bool trendActive = (InpTrendFilter && dir != 0);
+   bool allowBuy  = (!trendActive || dir == 1);
+   bool allowSell = (!trendActive || dir == -1);
+
+   // Fermer le cote a contre-tendance quand la tendance s'inverse
+   if(trendActive && InpCloseOnFlip)
+     {
+      if(dir == 1  && sells > 0) { CloseByType(POSITION_TYPE_SELL); sells = 0; }
+      if(dir == -1 && buys  > 0) { CloseByType(POSITION_TYPE_BUY);  buys  = 0; }
+     }
+
+   if(allowBuy  && buys  < target)
       OpenMarket(true);
-   if(sells < target)
+   if(allowSell && sells < target)
       OpenMarket(false);
   }
 
@@ -245,21 +314,32 @@ void BuildGrid()
    double tp    = InpTP_Pips * g_pip;
    double sl    = InpSL_Pips * g_pip;
 
+   int dir = TrendDirection();                 // +1 hausse, -1 baisse, 0 neutre/off
+   bool trendActive = (InpTrendFilter && dir != 0);
+   bool allowBuy  = (!trendActive || dir == 1);
+   bool allowSell = (!trendActive || dir == -1);
+
    for(int i = 0; i < InpLevels; i++)
      {
-      // BUY STOP au-dessus
-      double buyPrice = NormalizeDouble(ask + first + i * step, g_digits);
-      double buyTP = (InpTP_Pips > 0) ? NormalizeDouble(buyPrice + tp, g_digits) : 0.0;
-      double buySL = (InpSL_Pips > 0) ? NormalizeDouble(buyPrice - sl, g_digits) : 0.0;
-      if(!trade.BuyStop(InpLotPerOrder, buyPrice, _Symbol, buySL, buyTP, ORDER_TIME_GTC, 0, InpComment))
-         PrintFormat("Echec Buy Stop @ %.2f code=%d", buyPrice, trade.ResultRetcode());
+      // BUY STOP au-dessus (seulement si tendance haussiere ou pas de filtre)
+      if(allowBuy)
+        {
+         double buyPrice = NormalizeDouble(ask + first + i * step, g_digits);
+         double buyTP = (InpTP_Pips > 0) ? NormalizeDouble(buyPrice + tp, g_digits) : 0.0;
+         double buySL = (InpSL_Pips > 0) ? NormalizeDouble(buyPrice - sl, g_digits) : 0.0;
+         if(!trade.BuyStop(InpLotPerOrder, buyPrice, _Symbol, buySL, buyTP, ORDER_TIME_GTC, 0, InpComment))
+            PrintFormat("Echec Buy Stop @ %.2f code=%d", buyPrice, trade.ResultRetcode());
+        }
 
-      // SELL STOP en-dessous
-      double sellPrice = NormalizeDouble(bid - first - i * step, g_digits);
-      double sellTP = (InpTP_Pips > 0) ? NormalizeDouble(sellPrice - tp, g_digits) : 0.0;
-      double sellSL = (InpSL_Pips > 0) ? NormalizeDouble(sellPrice + sl, g_digits) : 0.0;
-      if(!trade.SellStop(InpLotPerOrder, sellPrice, _Symbol, sellSL, sellTP, ORDER_TIME_GTC, 0, InpComment))
-         PrintFormat("Echec Sell Stop @ %.2f code=%d", sellPrice, trade.ResultRetcode());
+      // SELL STOP en-dessous (seulement si tendance baissiere ou pas de filtre)
+      if(allowSell)
+        {
+         double sellPrice = NormalizeDouble(bid - first - i * step, g_digits);
+         double sellTP = (InpTP_Pips > 0) ? NormalizeDouble(sellPrice - tp, g_digits) : 0.0;
+         double sellSL = (InpSL_Pips > 0) ? NormalizeDouble(sellPrice + sl, g_digits) : 0.0;
+         if(!trade.SellStop(InpLotPerOrder, sellPrice, _Symbol, sellSL, sellTP, ORDER_TIME_GTC, 0, InpComment))
+            PrintFormat("Echec Sell Stop @ %.2f code=%d", sellPrice, trade.ResultRetcode());
+        }
      }
    g_gridCenter = (ask + bid) / 2.0;
    PrintFormat("Grille posee : %d Buy Stop + %d Sell Stop autour de %.2f",
