@@ -54,12 +54,14 @@ void OnTimer()
    string json = ReadSignal();
    if(json == "") return;
 
-   long   id     = (long)JsonNumber(json, "id");
-   string action = JsonString(json, "action");
-   string symbol = JsonString(json, "symbol");
-   double lot    = JsonNumber(json, "lot");
-   int    slPts  = (int)JsonNumber(json, "sl_points");
-   int    tpPts  = (int)JsonNumber(json, "tp_points");
+   long   id      = (long)JsonNumber(json, "id");
+   string action  = JsonString(json, "action");
+   string symbol  = JsonString(json, "symbol");
+   double lot     = JsonNumber(json, "lot");
+   int    slPts   = (int)JsonNumber(json, "sl_points");
+   int    tpPts   = (int)JsonNumber(json, "tp_points");
+   double slPrice = JsonNumber(json, "sl_price"); // niveau absolu dessine par l'indicateur (0 = absent)
+   double tpPrice = JsonNumber(json, "tp_price");
 
    if(id <= 0 || action == "") return;
    if(id == g_lastId) return;        // deja traite
@@ -70,16 +72,17 @@ void OnTimer()
    if(slPts <= 0)   slPts  = InpSlPoints;
    if(tpPts <= 0)   tpPts  = InpTpPoints;
 
-   PrintFormat("Signal #%d recu : action=%s symbol=%s lot=%.2f sl=%d tp=%d",
-               id, action, symbol, lot, slPts, tpPts);
+   PrintFormat("Signal #%d recu : action=%s symbol=%s lot=%.2f slPrice=%.5f tpPrice=%.5f sl=%d tp=%d",
+               id, action, symbol, lot, slPrice, tpPrice, slPts, tpPts);
 
-   Execute(action, symbol, lot, slPts, tpPts);
+   Execute(action, symbol, lot, slPts, tpPts, slPrice, tpPrice);
   }
 
 //+------------------------------------------------------------------+
 //| Execution de l'ordre                                             |
 //+------------------------------------------------------------------+
-void Execute(string action, string symbol, double lot, int slPts, int tpPts)
+void Execute(string action, string symbol, double lot, int slPts, int tpPts,
+             double slPrice = 0.0, double tpPrice = 0.0)
   {
    if(!InpAllowTrading)
      {
@@ -116,14 +119,25 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts)
       return;
      }
 
-   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-   double ask   = SymbolInfoDouble(symbol, SYMBOL_ASK);
-   double bid   = SymbolInfoDouble(symbol, SYMBOL_BID);
-   double price = isBuy ? ask : bid;
+   double point  = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int    digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double ask    = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   double bid    = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double price  = isBuy ? ask : bid;
    double sl = 0, tp = 0;
 
-   if(slPts > 0) sl = isBuy ? price - slPts * point : price + slPts * point;
-   if(tpPts > 0) tp = isBuy ? price + tpPts * point : price - tpPts * point;
+   // Priorite 1 : niveaux absolus lus depuis l'indicateur (SL/TP dessines).
+   if(slPrice > 0) sl = NormalizeDouble(slPrice, digits);
+   if(tpPrice > 0) tp = NormalizeDouble(tpPrice, digits);
+   // Priorite 2 (secours) : calcul en points si l'indicateur n'a rien fourni.
+   if(sl == 0 && slPts > 0) sl = isBuy ? price - slPts * point : price + slPts * point;
+   if(tp == 0 && tpPts > 0) tp = isBuy ? price + tpPts * point : price - tpPts * point;
+
+   // Garde-fou : un SL/TP du mauvais cote du prix serait rejete par le broker -> on l'ignore.
+   if(sl > 0 && ((isBuy && sl >= price) || (!isBuy && sl <= price)))
+     { PrintFormat("SL %.5f du mauvais cote (prix %.5f), ignore.", sl, price); sl = 0; }
+   if(tp > 0 && ((isBuy && tp <= price) || (!isBuy && tp >= price)))
+     { PrintFormat("TP %.5f du mauvais cote (prix %.5f), ignore.", tp, price); tp = 0; }
 
    lot = NormalizeLot(symbol, lot);
 

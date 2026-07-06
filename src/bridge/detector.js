@@ -6,13 +6,20 @@
  * un etat cible : LONG / SHORT / FLAT, puis on emet un signal uniquement quand
  * l'etat CHANGE (anti-doublon).
  */
-import { data } from '../core/index.js';
+import { data as coreData } from '../core/index.js';
 
 const STATE = { LONG: 'LONG', SHORT: 'SHORT', FLAT: 'FLAT' };
 
 function matchesAny(text, keywords) {
   const t = (text || '').toLowerCase();
   return keywords.some((k) => t.includes(String(k).toLowerCase()));
+}
+
+/** Extrait le premier nombre (prix) present dans un texte de label. */
+function parsePriceFromText(text) {
+  if (!text) return null;
+  const m = String(text).replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
 }
 
 /** Parse une regle du type "> 0", "<= -1.5", "== 0" en fonction testable. */
@@ -36,19 +43,74 @@ function compileRule(rule) {
 }
 
 export class SignalDetector {
-  constructor(cfg) {
+  constructor(cfg, deps = {}) {
     this.cfg = cfg;
+    this.data = deps.data || coreData; // injectable pour les tests
     this.ind = cfg.indicator;
     this.lastState = STATE.FLAT;
     this.lastLabelId = null;
     this.longRule = compileRule(this.ind.study_value?.long_when);
     this.shortRule = compileRule(this.ind.study_value?.short_when);
     this.flatRule = compileRule(this.ind.study_value?.flat_when);
+    this.sltp = cfg.sltp || { enabled: false };
+  }
+
+  /**
+   * Lit les niveaux SL et TP que l'indicateur dessine (labels "SL 24500" /
+   * "TP 24600" ou lignes horizontales), et les valide par geometrie :
+   *  - achat  : SL sous le prix d'entree, TP au-dessus
+   *  - vente  : SL au-dessus, TP en dessous
+   * Retourne des PRIX absolus, prets a etre envoyes a MT5.
+   */
+  async readSlTp({ isBuy, entryPrice }) {
+    if (!this.sltp?.enabled) return { sl_price: 0, tp_price: 0 };
+    const source = this.sltp.source || 'label';
+    const cands = { sl: [], tp: [] }; // listes de prix candidats
+
+    if (source === 'label' || source === 'auto') {
+      const res = await this.data.getPineLabels({ study_filter: this.ind.study_filter, verbose: true, max_labels: 40 });
+      for (const st of res?.studies || []) {
+        for (const lb of st.labels || []) {
+          const price = this.sltp.use_label_price !== false && lb.price != null
+            ? lb.price
+            : parsePriceFromText(lb.text);
+          if (price == null) continue;
+          if (matchesAny(lb.text, this.sltp.sl_keywords || ['sl', 'stop'])) cands.sl.push(price);
+          else if (matchesAny(lb.text, this.sltp.tp_keywords || ['tp', 'target'])) cands.tp.push(price);
+        }
+      }
+    }
+    if (source === 'line' || (source === 'auto' && cands.sl.length === 0 && cands.tp.length === 0)) {
+      // Sans texte : on deduit par position. Parmi les lignes horizontales,
+      // celles du bon cote de l'entree deviennent SL ou TP.
+      const res = await this.data.getPineLines({ study_filter: this.ind.study_filter });
+      const levels = [];
+      for (const st of res?.studies || []) levels.push(...(st.horizontal_levels || []));
+      for (const lvl of levels) {
+        if (isBuy) { (lvl < entryPrice ? cands.sl : cands.tp).push(lvl); }
+        else { (lvl > entryPrice ? cands.sl : cands.tp).push(lvl); }
+      }
+    }
+
+    // Garder seulement les niveaux du bon cote, puis prendre le plus PROCHE
+    // de l'entree (SL le plus serre, TP1 le plus conservateur).
+    const nearest = (arr, keep) => {
+      const valid = arr.filter(keep);
+      if (valid.length === 0) return 0;
+      return valid.reduce((a, b) => (Math.abs(b - entryPrice) < Math.abs(a - entryPrice) ? b : a));
+    };
+    const sl_price = isBuy
+      ? nearest(cands.sl, (p) => p < entryPrice)
+      : nearest(cands.sl, (p) => p > entryPrice);
+    const tp_price = isBuy
+      ? nearest(cands.tp, (p) => p > entryPrice)
+      : nearest(cands.tp, (p) => p < entryPrice);
+    return { sl_price, tp_price };
   }
 
   /** Determine l'etat cible depuis les labels dessines par l'indicateur. */
   async readFromLabels() {
-    const res = await data.getPineLabels({
+    const res = await this.data.getPineLabels({
       study_filter: this.ind.study_filter,
       verbose: true,
       max_labels: 20,
@@ -56,40 +118,38 @@ export class SignalDetector {
     const studies = res?.studies || [];
     if (studies.length === 0) return null;
 
-    // Prendre le label le plus recent (id le plus eleve) parmi toutes les etudes ciblees.
+    // Classer chaque label. IMPORTANT : l'indicateur dessine aussi des labels
+    // SL et TP (souvent avec un id PLUS RECENT que l'entree). On ne retient que
+    // les labels qui sont de VRAIS signaux d'entree/sortie, puis on prend le
+    // plus recent de CEUX-LA — sinon on confondrait le TP avec le signal.
     let newest = null;
     for (const st of studies) {
       for (const lb of st.labels || []) {
+        let state = null;
+        if (matchesAny(lb.text, this.ind.buy_keywords)) state = STATE.LONG;
+        else if (matchesAny(lb.text, this.ind.sell_keywords)) state = STATE.SHORT;
+        else if (matchesAny(lb.text, this.ind.flat_keywords)) state = STATE.FLAT;
+        if (state === null) continue; // label SL/TP/autre -> ignore comme signal
         const id = Number(lb.id);
         if (newest === null || id > newest.id) {
-          newest = { id, text: lb.text, price: lb.price };
+          newest = { id, text: lb.text, price: lb.price, state };
         }
       }
     }
     if (!newest) return null;
 
-    // Meme label qu'au dernier tick -> rien de neuf.
+    // Meme signal qu'au dernier tick -> rien de neuf.
     if (this.lastLabelId !== null && newest.id === this.lastLabelId) {
       return { state: this.lastState, labelId: newest.id, fresh: false, reason: newest.text };
     }
-
-    let state = null;
-    if (matchesAny(newest.text, this.ind.buy_keywords)) state = STATE.LONG;
-    else if (matchesAny(newest.text, this.ind.sell_keywords)) state = STATE.SHORT;
-    else if (matchesAny(newest.text, this.ind.flat_keywords)) state = STATE.FLAT;
-
-    if (state === null) {
-      // Nouveau label mais pas un signal reconnu -> on memorise l'id sans changer l'etat.
-      return { state: this.lastState, labelId: newest.id, fresh: false, reason: newest.text };
-    }
-    return { state, labelId: newest.id, fresh: true, reason: newest.text, price: newest.price };
+    return { state: newest.state, labelId: newest.id, fresh: true, reason: newest.text, price: newest.price };
   }
 
   /** Determine l'etat cible depuis une valeur numerique de la Data Window. */
   async readFromStudyValue() {
     const field = this.ind.study_value?.field;
     if (!field) return null;
-    const res = await data.getStudyValues();
+    const res = await this.data.getStudyValues();
     const studies = res?.studies || [];
     const filter = (this.ind.study_filter || '').toLowerCase();
 
@@ -137,12 +197,31 @@ export class SignalDetector {
     else if (read.state === STATE.SHORT) action = 'SELL';
     else action = 'CLOSE';
 
+    let sl_price = 0;
+    let tp_price = 0;
+    if (action !== 'CLOSE' && this.sltp?.enabled) {
+      // Prix d'entree : celui du label, sinon le prix marche courant.
+      let entryPrice = read.price;
+      if (entryPrice == null || entryPrice === 0) {
+        try { entryPrice = (await this.data.getQuote({}))?.price ?? null; } catch { entryPrice = null; }
+      }
+      if (entryPrice != null) {
+        try {
+          const lv = await this.readSlTp({ isBuy: action === 'BUY', entryPrice });
+          sl_price = lv.sl_price;
+          tp_price = lv.tp_price;
+        } catch { /* SL/TP optionnels : on continue sans si echec */ }
+      }
+    }
+
     return {
       action,
       from: prev,
       to: read.state,
       reason: read.reason || '',
       price: read.price ?? null,
+      sl_price,
+      tp_price,
     };
   }
 }

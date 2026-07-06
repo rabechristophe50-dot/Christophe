@@ -20,6 +20,13 @@ const DEFAULTS = {
     flat_keywords: ['close', 'exit', 'flat'],
     study_value: { field: 'Signal', long_when: '> 0', short_when: '< 0', flat_when: '== 0' },
   },
+  sltp: {
+    enabled: true,
+    source: 'auto',
+    sl_keywords: ['sl', 'stop'],
+    tp_keywords: ['tp', 'target', 'take profit'],
+    use_label_price: true,
+  },
   order: { lot: 0.1, sl_points: 0, tp_points: 0, close_opposite: true },
   sink: { file: true, file_path: './mt5-signal/tv_signal.json', http: true, http_port: 8787 },
 };

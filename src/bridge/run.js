@@ -61,12 +61,17 @@ async function main() {
           lot: cfg.order.lot,
           sl_points: cfg.order.sl_points,
           tp_points: cfg.order.tp_points,
+          sl_price: signal.sl_price,
+          tp_price: signal.tp_price,
           reason: signal.reason,
         });
         const stamp = new Date().toISOString().slice(11, 19);
+        const sltp = (signal.sl_price || signal.tp_price)
+          ? `  SL=${signal.sl_price || '-'} TP=${signal.tp_price || '-'}`
+          : '';
         console.log(
           `[${stamp}] SIGNAL #${published.id}  ${signal.from} -> ${signal.to}  ` +
-          `=> ${signal.action} ${mtSym}  (${signal.reason})`,
+          `=> ${signal.action} ${mtSym}${sltp}  (${signal.reason})`,
         );
       }
     } catch (e) {

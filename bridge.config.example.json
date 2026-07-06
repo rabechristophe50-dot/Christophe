@@ -28,12 +28,22 @@
     }
   },
 
+  "sltp": {
+    "_comment": "SL/TP lus DIRECTEMENT depuis l'indicateur (niveaux dessines). Prioritaire sur order.sl_points/tp_points.",
+    "enabled": true,
+    "_comment_source": "'label' = labels type 'SL 24500'/'TP 24600' ; 'line' = lignes horizontales (deduit par position) ; 'auto' = essaie label puis line.",
+    "source": "auto",
+    "sl_keywords": ["sl", "stop", "s/l", "🛑"],
+    "tp_keywords": ["tp", "target", "take profit", "t/p", "🎯"],
+    "use_label_price": true
+  },
+
   "order": {
     "lot": 0.10,
     "sl_points": 0,
     "tp_points": 0,
     "close_opposite": true,
-    "_comment": "sl_points/tp_points en points broker (0 = desactive). close_opposite ferme la position inverse avant d'ouvrir."
+    "_comment": "sl_points/tp_points = SECOURS en points broker si l'indicateur ne fournit pas de niveau (0 = desactive). close_opposite ferme la position inverse avant d'ouvrir."
   },
 
   "sink": {

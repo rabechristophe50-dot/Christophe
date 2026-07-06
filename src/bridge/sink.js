@@ -39,7 +39,7 @@ export class SignalSink {
   }
 
   /** Publie un nouveau signal (incremente l'id -> l'EA sait qu'il est neuf). */
-  publish({ action, symbol, lot, sl_points, tp_points, reason }) {
+  publish({ action, symbol, lot, sl_points, tp_points, sl_price, tp_price, reason }) {
     this.latest = {
       id: this.latest.id + 1,
       action,
@@ -47,6 +47,8 @@ export class SignalSink {
       lot,
       sl_points,
       tp_points,
+      sl_price: sl_price || 0,
+      tp_price: tp_price || 0,
       reason: reason || '',
       ts: Date.now(),
     };

@@ -50,8 +50,11 @@ Points clés de `bridge.config.json` :
 | `indicator.mode` | `"label"` (signaux dessinés par `label.new()`) ou `"study_value"` (valeur numérique de la Data Window). |
 | `indicator.buy_keywords` / `sell_keywords` / `flat_keywords` | Mots-clés cherchés dans le texte des labels (ex. `"buy"`, `"long"`, `"▲"`). Adapte-les **à ton indicateur**. |
 | `indicator.study_value` | En mode `study_value` : nom du champ + règles `"> 0"`, `"< 0"`, `"== 0"`. |
+| `sltp.enabled` / `source` | Lit le **SL et le TP dessinés par ton indicateur** et les envoie à MT5 comme prix exacts. `source`: `"label"`, `"line"` ou `"auto"`. |
+| `sltp.sl_keywords` / `tp_keywords` | Mots-clés du texte des labels SL/TP (ex. `"sl"`, `"stop"`, `"tp"`, `"target"`). |
 | `symbol_map` | Traduit le symbole TradingView → symbole de ton broker MT5 (ex. `"BTCUSDT" → "BTCUSD"`). |
-| `order.lot` / `sl_points` / `tp_points` | Taille de lot et SL/TP en points (0 = désactivé). |
+| `order.lot` | Taille de lot. |
+| `order.sl_points` / `tp_points` | **Secours** en points, utilisés seulement si l'indicateur ne fournit pas de niveau (0 = désactivé). |
 | `sink.file_path` | **Où écrire le signal** (voir étape 3). |
 | `sink.http_port` | Port HTTP si tu utilises la voie WebRequest. |
 
@@ -136,6 +139,25 @@ d'état** :
 | → FLAT | `CLOSE` (ferme la position du symbole) |
 
 L'EA n'empile pas : s'il est déjà LONG et reçoit un nouveau BUY, il ignore.
+
+### SL et TP depuis l'indicateur
+
+Ton indicateur affiche **BUY, SELL, SL et TP** — le pont exploite tout :
+
+1. À l'apparition d'un signal d'entrée (BUY/SELL), il lit les niveaux **SL** et
+   **TP** que l'indicateur dessine (labels « SL 24500 » / « TP 24600 », ou lignes
+   horizontales) et les envoie comme **prix absolus** à MT5.
+2. L'EA place l'ordre avec **exactement** ces SL/TP. Pas de recalcul en points.
+3. Validation géométrique : un SL au-dessus du prix pour un achat (ou du mauvais
+   côté) est **automatiquement ignoré** pour éviter un rejet du broker.
+4. S'il y a plusieurs TP (TP1/TP2/TP3), le pont prend le **plus proche** (TP1,
+   le plus prudent).
+5. Les labels SL/TP ont souvent un `id` plus récent que l'entrée : le détecteur
+   ne les confond jamais avec un signal — il ne traite comme entrée que les
+   labels contenant tes `buy_keywords`/`sell_keywords`.
+
+Si l'indicateur ne fournit pas de niveau, l'EA retombe sur `order.sl_points` /
+`tp_points` (secours en points), sinon aucun SL/TP.
 
 ## Sécurité / bonnes pratiques
 
