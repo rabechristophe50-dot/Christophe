@@ -222,6 +222,8 @@ export class SignalDetector {
 
     let sl_price = 0;
     let tp_price = 0;
+    let sl_dist = 0;
+    let tp_dist = 0;
     if (action !== 'CLOSE' && this.sltp?.enabled) {
       // Prix d'entree : celui du label, sinon le prix marche courant.
       let entryPrice = read.price;
@@ -233,6 +235,10 @@ export class SignalDetector {
           const lv = await this.readSlTp({ isBuy: action === 'BUY', entryPrice });
           sl_price = lv.sl_price;
           tp_price = lv.tp_price;
+          // Distances (en prix) depuis l'entree TV : robustes au decalage de flux
+          // entre TradingView et le broker. L'EA les applique au prix reel MT5.
+          if (sl_price > 0) sl_dist = Math.round(Math.abs(entryPrice - sl_price) * 100) / 100;
+          if (tp_price > 0) tp_dist = Math.round(Math.abs(entryPrice - tp_price) * 100) / 100;
         } catch { /* SL/TP optionnels : on continue sans si echec */ }
       }
     }
@@ -245,6 +251,8 @@ export class SignalDetector {
       price: read.price ?? null,
       sl_price,
       tp_price,
+      sl_dist,
+      tp_dist,
     };
   }
 }

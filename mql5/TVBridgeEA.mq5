@@ -27,6 +27,14 @@ input bool   InpAllowTrading  = true;             // false = mode simulation (lo
 input bool   InpShowDrawings  = true;             // afficher les lignes/labels de l'indicateur TV
 input string InpDrawFile      = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
 
+//--- SL/TP : prix exact TV, ou distance appliquee au prix reel MT5 -
+enum ENUM_SLTP_MODE
+  {
+   SLTP_DISTANCE,  // distance depuis l'entree, appliquee au prix reel MT5 (robuste au decalage de flux)
+   SLTP_ABSOLUTE   // prix exact envoye par TradingView
+  };
+input ENUM_SLTP_MODE InpSlTpMode = SLTP_DISTANCE; // comment poser le SL/TP
+
 //--- Protection du capital -----------------------------------------
 enum ENUM_RISK_MODE
   {
@@ -90,6 +98,8 @@ void OnTimer()
    int    tpPts   = (int)JsonNumber(json, "tp_points");
    double slPrice = JsonNumber(json, "sl_price"); // niveau absolu dessine par l'indicateur (0 = absent)
    double tpPrice = JsonNumber(json, "tp_price");
+   double slDist  = JsonNumber(json, "sl_dist");  // distance SL depuis l'entree TV (en prix)
+   double tpDist  = JsonNumber(json, "tp_dist");
 
    if(id <= 0 || action == "") return;
    if(id == g_lastId) return;        // deja traite
@@ -100,17 +110,18 @@ void OnTimer()
    if(slPts <= 0)   slPts  = InpSlPoints;
    if(tpPts <= 0)   tpPts  = InpTpPoints;
 
-   PrintFormat("Signal #%d recu : action=%s symbol=%s lot=%.2f slPrice=%.5f tpPrice=%.5f sl=%d tp=%d",
-               id, action, symbol, lot, slPrice, tpPrice, slPts, tpPts);
+   PrintFormat("Signal #%d recu : action=%s symbol=%s lot=%.2f slDist=%.2f tpDist=%.2f slPrice=%.3f tpPrice=%.3f",
+               id, action, symbol, lot, slDist, tpDist, slPrice, tpPrice);
 
-   Execute(action, symbol, lot, slPts, tpPts, slPrice, tpPrice);
+   Execute(action, symbol, lot, slPts, tpPts, slPrice, tpPrice, slDist, tpDist);
   }
 
 //+------------------------------------------------------------------+
 //| Execution de l'ordre                                             |
 //+------------------------------------------------------------------+
 void Execute(string action, string symbol, double lot, int slPts, int tpPts,
-             double slPrice = 0.0, double tpPrice = 0.0)
+             double slPrice = 0.0, double tpPrice = 0.0,
+             double slDist = 0.0, double tpDist = 0.0)
   {
    if(!InpAllowTrading)
      {
@@ -164,12 +175,24 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
    double price  = isBuy ? ask : bid;
    double sl = 0, tp = 0;
 
-   // Priorite 1 : niveaux absolus lus depuis l'indicateur (SL/TP dessines).
-   if(slPrice > 0) sl = NormalizeDouble(slPrice, digits);
-   if(tpPrice > 0) tp = NormalizeDouble(tpPrice, digits);
-   // Priorite 2 (secours) : calcul en points si l'indicateur n'a rien fourni.
+   if(InpSlTpMode == SLTP_DISTANCE)
+     {
+      // Priorite 1 : DISTANCE depuis l'entree TV, appliquee au prix reel MT5.
+      // Immunise contre le decalage de flux entre TradingView et le broker.
+      if(slDist > 0) sl = isBuy ? price - slDist : price + slDist;
+      if(tpDist > 0) tp = isBuy ? price + tpDist : price - tpDist;
+     }
+   else
+     {
+      // Mode ABSOLU : prix exacts envoyes par TradingView.
+      if(slPrice > 0) sl = NormalizeDouble(slPrice, digits);
+      if(tpPrice > 0) tp = NormalizeDouble(tpPrice, digits);
+     }
+   // Secours : calcul en points si rien de defini ci-dessus.
    if(sl == 0 && slPts > 0) sl = isBuy ? price - slPts * point : price + slPts * point;
    if(tp == 0 && tpPts > 0) tp = isBuy ? price + tpPts * point : price - tpPts * point;
+   sl = NormalizeDouble(sl, digits);
+   tp = NormalizeDouble(tp, digits);
 
    // Garde-fou : un SL/TP du mauvais cote du prix serait rejete par le broker -> on l'ignore.
    if(sl > 0 && ((isBuy && sl >= price) || (!isBuy && sl <= price)))

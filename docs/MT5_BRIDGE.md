@@ -159,6 +159,17 @@ Ton indicateur affiche **BUY, SELL, SL et TP** — le pont exploite tout :
 Si l'indicateur ne fournit pas de niveau, l'EA retombe sur `order.sl_points` /
 `tp_points` (secours en points), sinon aucun SL/TP.
 
+### Prix exact vs distance (décalage de flux)
+
+TradingView et le terminal du broker n'ont jamais exactement le même prix (flux
+différents). Deux modes via l'entrée EA `InpSlTpMode` :
+
+- **`SLTP_DISTANCE`** (défaut, recommandé) : le pont envoie la **distance** SL/TP
+  depuis l'entrée TV (`sl_dist`/`tp_dist`), et l'EA l'applique au **prix réel
+  MT5**. Le décalage entre les deux flux n'a plus aucun effet.
+- **`SLTP_ABSOLUTE`** : l'EA pose les **prix exacts** de TradingView. À n'utiliser
+  que si TV et le broker partagent strictement le même flux.
+
 ## Garde-fou timeframe / symbole
 
 Les signaux viennent du **graphique TradingView affiché** : son timeframe et son

@@ -125,6 +125,8 @@ async function main() {
           tp_points: cfg.order.tp_points,
           sl_price: signal.sl_price,
           tp_price: signal.tp_price,
+          sl_dist: signal.sl_dist,
+          tp_dist: signal.tp_dist,
           reason: signal.reason,
         });
         const stamp = new Date().toISOString().slice(11, 19);
