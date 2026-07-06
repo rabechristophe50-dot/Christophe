@@ -235,8 +235,10 @@ string ReadCommonFile(string name)
    int h = FileOpen(name, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(h == INVALID_HANDLE) return "";
    string content = "";
+   // En mode TXT, FileReadString retire le saut de ligne : on le remet, sinon
+   // un fichier multi-lignes (les dessins) se collerait en une seule ligne.
    while(!FileIsEnding(h))
-      content += FileReadString(h);
+      content += FileReadString(h) + "\n";
    FileClose(h);
    return content;
   }
@@ -322,6 +324,14 @@ void RenderDrawings()
         }
      }
    ChartRedraw(0);
+
+   // Diagnostic : afficher le nombre d'objets seulement quand il change.
+   static int lastCount = -1;
+   if(idx != lastCount)
+     {
+      lastCount = idx;
+      PrintFormat("Miroir visuel : %d objets dessines (fichier %d caracteres)", idx, StringLen(content));
+     }
   }
 
 //+------------------------------------------------------------------+
