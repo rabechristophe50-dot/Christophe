@@ -7,6 +7,14 @@ import { writeFileSync, renameSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { createServer } from 'http';
 
+/** Ecriture atomique d'un fichier texte (temp + rename). */
+export function writeTextAtomic(path, text) {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = path + '.tmp';
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
 export class SignalSink {
   constructor(cfg) {
     this.cfg = cfg.sink;

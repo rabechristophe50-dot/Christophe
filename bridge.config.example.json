@@ -48,6 +48,14 @@
     "_comment": "sl_points/tp_points = SECOURS en points broker si l'indicateur ne fournit pas de niveau (0 = desactive). close_opposite ferme la position inverse avant d'ouvrir."
   },
 
+  "drawings": {
+    "_comment": "Miroir visuel : recopie les lignes/labels de l'indicateur sur le graphique MT5. file_path vide = meme dossier que le signal, fichier tv_draw.txt.",
+    "enabled": true,
+    "file_path": "",
+    "refresh_ms": 3000,
+    "max_labels": 60
+  },
+
   "sink": {
     "file": true,
     "_comment_file_path": "Chemin ou ecrire le signal. IDEAL: le dossier Common\\Files de MT5 pour que l'EA le lise directement.",

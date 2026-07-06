@@ -7,9 +7,11 @@
  * Boucle : lit le graphique via CDP, detecte les changements de signal de
  * l'indicateur, et publie un ordre (fichier + HTTP) que l'EA MT5 execute.
  */
+import { dirname, join } from 'path';
 import { loadConfig } from './config.js';
 import { SignalDetector } from './detector.js';
-import { SignalSink } from './sink.js';
+import { SignalSink, writeTextAtomic } from './sink.js';
+import { collectDrawings } from './drawings.js';
 import { data } from '../core/index.js';
 
 function mapSymbol(cfg, tvSymbol) {
@@ -46,12 +48,27 @@ async function main() {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 
+  // Miroir visuel : ecrit periodiquement les dessins de l'indicateur dans un
+  // fichier texte que l'EA MT5 redessine sur son graphique.
+  const drawCfg = cfg.drawings || {};
+  const drawPath = drawCfg.file_path || join(dirname(cfg.sink.file_path), 'tv_draw.txt');
+  if (drawCfg.enabled) console.log(`[bridge] Miroir visuel: ${drawPath}`);
+  let lastDraw = 0;
+
   let consecutiveErrors = 0;
   while (running) {
     const t0 = Date.now();
     try {
       const signal = await detector.poll();
       consecutiveErrors = 0;
+
+      if (drawCfg.enabled && t0 - lastDraw >= (drawCfg.refresh_ms || 3000)) {
+        lastDraw = t0;
+        try {
+          const text = await collectDrawings({ study_filter: cfg.indicator.study_filter, max_labels: drawCfg.max_labels }, { data });
+          writeTextAtomic(drawPath, text);
+        } catch (e) { /* miroir optionnel : on n'interrompt pas le trading */ }
+      }
       if (signal) {
         const tvSym = await currentTvSymbol();
         const mtSym = mapSymbol(cfg, tvSym);

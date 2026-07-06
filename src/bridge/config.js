@@ -30,6 +30,7 @@ const DEFAULTS = {
   },
   order: { lot: 0.1, sl_points: 0, tp_points: 0, close_opposite: true },
   sink: { file: true, file_path: './mt5-signal/tv_signal.json', http: true, http_port: 8787 },
+  drawings: { enabled: true, file_path: '', refresh_ms: 3000, max_labels: 60 },
 };
 
 function deepMerge(base, override) {

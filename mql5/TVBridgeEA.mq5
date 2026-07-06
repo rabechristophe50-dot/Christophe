@@ -24,10 +24,15 @@ input int    InpSlippage      = 20;               // deviation max en points
 input long   InpMagic         = 88112277;         // magic number
 input bool   InpCloseOpposite = true;             // fermer la position inverse avant d'ouvrir
 input bool   InpAllowTrading  = true;             // false = mode simulation (log sans ordre reel)
+input bool   InpShowDrawings  = true;             // afficher les lignes/labels de l'indicateur TV
+input string InpDrawFile      = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
 
 //--- Global --------------------------------------------------------
 CTrade   trade;
 long     g_lastId = -1;   // dernier id de signal traite
+int      g_drawTick = 0;  // compteur pour rafraichir les dessins moins souvent
+
+#define DRAW_PREFIX "TVD_"
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -44,13 +49,21 @@ int OnInit()
    return(INIT_SUCCEEDED);
   }
 
-void OnDeinit(const int reason) { EventKillTimer(); }
+void OnDeinit(const int reason)
+  {
+   EventKillTimer();
+   ObjectsDeleteAll(0, DRAW_PREFIX); // nettoie les dessins a la fermeture
+  }
 
 //+------------------------------------------------------------------+
 //| Timer : lit le signal et agit                                    |
 //+------------------------------------------------------------------+
 void OnTimer()
   {
+   // Rafraichir le miroir visuel toutes les ~5 secondes.
+   if(InpShowDrawings && (++g_drawTick % 5 == 0))
+      RenderDrawings();
+
    string json = ReadSignal();
    if(json == "") return;
 
@@ -214,10 +227,12 @@ string ReadSignal()
    return ReadFile();
   }
 
-string ReadFile()
+string ReadFile() { return ReadCommonFile(InpFileName); }
+
+// Lit un fichier texte du dossier COMMUN : ...\MetaQuotes\Terminal\Common\Files
+string ReadCommonFile(string name)
   {
-   // Le pont Node ecrit dans le dossier COMMUN : ...\MetaQuotes\Terminal\Common\Files
-   int h = FileOpen(InpFileName, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
+   int h = FileOpen(name, FILE_READ | FILE_TXT | FILE_ANSI | FILE_COMMON);
    if(h == INVALID_HANDLE) return "";
    string content = "";
    while(!FileIsEnding(h))
@@ -240,6 +255,73 @@ string ReadHttp()
       return "";
      }
    return CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+  }
+
+//+------------------------------------------------------------------+
+//| Miroir visuel : redessine les lignes/labels de l'indicateur TV   |
+//+------------------------------------------------------------------+
+color ColorForText(string text)
+  {
+   string t = text;
+   StringToLower(t);
+   if(StringFind(t, "sl") >= 0)   return clrTomato;
+   if(StringFind(t, "tp") >= 0)   return clrLimeGreen;
+   if(StringFind(t, "buy") >= 0)  return clrDodgerBlue;
+   if(StringFind(t, "sell") >= 0) return clrOrange;
+   return clrSilver;
+  }
+
+void RenderDrawings()
+  {
+   string content = ReadCommonFile(InpDrawFile);
+   if(content == "") return;
+   StringReplace(content, "\r", "");
+
+   ObjectsDeleteAll(0, DRAW_PREFIX); // on repart propre a chaque rafraichissement
+
+   string lines[];
+   int n = StringSplit(content, (ushort)'\n', lines);
+   datetime anchor = TimeCurrent();
+   int idx = 0;
+
+   for(int i = 0; i < n; i++)
+     {
+      string parts[];
+      int k = StringSplit(lines[i], (ushort)'|', parts);
+      if(k < 2) continue;
+
+      if(parts[0] == "L")
+        {
+         double price = StringToDouble(parts[1]);
+         if(price <= 0) continue;
+         string name = DRAW_PREFIX + "L" + IntegerToString(idx++);
+         if(ObjectCreate(0, name, OBJ_HLINE, 0, 0, price))
+           {
+            ObjectSetInteger(0, name, OBJPROP_COLOR, clrDimGray);
+            ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
+            ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+            ObjectSetInteger(0, name, OBJPROP_BACK, true);
+            ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+           }
+        }
+      else if(parts[0] == "T" && k >= 3)
+        {
+         double price = StringToDouble(parts[1]);
+         if(price <= 0) continue;
+         string text = parts[2];
+         color c = ColorForText(text);
+         string name = DRAW_PREFIX + "T" + IntegerToString(idx++);
+         if(ObjectCreate(0, name, OBJ_TEXT, 0, anchor, price))
+           {
+            ObjectSetString(0, name, OBJPROP_TEXT, " " + text);
+            ObjectSetInteger(0, name, OBJPROP_COLOR, c);
+            ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+            ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT);
+            ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+           }
+        }
+     }
+   ChartRedraw(0);
   }
 
 //+------------------------------------------------------------------+
