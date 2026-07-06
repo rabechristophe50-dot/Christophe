@@ -113,6 +113,8 @@ async function main() {
             exclude_keywords: cfg.indicator.exclude_keywords,
             sl_keywords: cfg.sltp?.sl_keywords,
             tp_keywords: cfg.sltp?.tp_keywords,
+            show_boxes: drawCfg.show_boxes,
+            max_boxes: drawCfg.max_boxes,
           }, { data });
           writeTextAtomic(drawPath, text);
         } catch (e) { /* miroir optionnel : on n'interrompt pas le trading */ }

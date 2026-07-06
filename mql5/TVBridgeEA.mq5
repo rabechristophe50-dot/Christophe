@@ -406,6 +406,23 @@ void RenderDrawings()
             ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
            }
         }
+      else if(parts[0] == "B" && k >= 3)
+        {
+         double hi = StringToDouble(parts[1]);
+         double lo = StringToDouble(parts[2]);
+         if(hi <= 0 || lo <= 0) continue;
+         // Order Block : rectangle (zone) couvrant une large plage de temps.
+         datetime t1 = anchor - 400 * PeriodSeconds();
+         datetime t2 = anchor + 30 * PeriodSeconds();
+         string name = DRAW_PREFIX + "B" + IntegerToString(idx++);
+         if(ObjectCreate(0, name, OBJ_RECTANGLE, 0, t1, hi, t2, lo))
+           {
+            ObjectSetInteger(0, name, OBJPROP_COLOR, clrSlateGray);
+            ObjectSetInteger(0, name, OBJPROP_FILL, true);
+            ObjectSetInteger(0, name, OBJPROP_BACK, true);
+            ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+           }
+        }
       else if(parts[0] == "T" && k >= 3)
         {
          double price = StringToDouble(parts[1]);

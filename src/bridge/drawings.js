@@ -4,6 +4,7 @@
  * Format de sortie (facile a parser en MQL5) :
  *   L|4150.43            -> ligne horizontale a ce prix
  *   T|4126.42|BUY HC     -> texte "BUY HC" a ce prix
+ *   B|4155.0|4148.0      -> boite (Order Block) entre high et low
  *
  * Deux modes :
  *   - 'active' (defaut) : uniquement le DERNIER signal d'entree + son SL + son TP
@@ -39,10 +40,30 @@ export async function collectDrawings(opts = {}, deps = {}) {
     exclude_keywords = ['limit'],
     sl_keywords = ['sl'],
     tp_keywords = ['tp'],
+    show_boxes = true,
+    max_boxes = 4,
   } = opts;
 
   if (mode === 'active') return collectActive();
   return collectAll();
+
+  // Lit les boites (Order Blocks) et garde les 'limit' plus proches d'un prix.
+  async function readBoxes(reference, limit) {
+    if (!show_boxes) return [];
+    try {
+      const res = await data.getPineBoxes({ study_filter });
+      const zones = [];
+      for (const st of res?.studies || []) for (const z of st.zones || []) {
+        if (z.high != null && z.low != null) zones.push(z);
+      }
+      if (reference != null && zones.length > limit) {
+        const mid = (z) => (z.high + z.low) / 2;
+        zones.sort((a, b) => Math.abs(mid(a) - reference) - Math.abs(mid(b) - reference));
+        return zones.slice(0, limit);
+      }
+      return zones.slice(0, limit);
+    } catch { return []; }
+  }
 
   // --- Mode 'active' : dernier signal d'entree + son SL + son TP -----------
   async function collectActive() {
@@ -78,6 +99,8 @@ export async function collectDrawings(opts = {}, deps = {}) {
     const out = [`T|${entry.price}|${entry.text}`];
     if (sl > 0) { out.push(`L|${sl}`); out.push(`T|${sl}|SL`); }
     if (tp > 0) { out.push(`L|${tp}`); out.push(`T|${tp}|TP`); }
+    // Order Blocks les plus proches de l'entree.
+    for (const z of await readBoxes(entry.price, max_boxes)) out.push(`B|${z.high}|${z.low}`);
     return out.join('\n');
   }
 
@@ -98,6 +121,7 @@ export async function collectDrawings(opts = {}, deps = {}) {
         if (lvl != null) out.push(`L|${lvl}`);
       }
     } catch { /* pas de lignes */ }
+    for (const z of await readBoxes(null, max_boxes)) out.push(`B|${z.high}|${z.low}`);
     return out.join('\n');
   }
 }
