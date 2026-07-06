@@ -43,10 +43,10 @@
   },
 
   "guard": {
-    "_comment": "Ne trader QUE si TradingView est sur ce symbole et un de ces timeframes. Protege contre un changement accidentel de TF/symbole. TF: 5=M5, 15=M15, 60=H1, etc.",
+    "_comment": "Ne trader QUE si TradingView est sur ce symbole. timeframes vide = TOUS les timeframes autorises. Mets ['5','15'] pour limiter au M5/M15.",
     "enabled": true,
     "symbol": "XAUUSD",
-    "timeframes": ["1", "5", "15"]
+    "timeframes": []
   },
 
   "order": {
