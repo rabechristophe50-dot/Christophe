@@ -130,12 +130,17 @@ async function main() {
           reason: signal.reason,
         });
         const stamp = new Date().toISOString().slice(11, 19);
-        const sltp = (signal.sl_price || signal.tp_price)
-          ? `  SL=${signal.sl_price || '-'} TP=${signal.tp_price || '-'}`
+        const sltp = (signal.sl_dist || signal.tp_dist)
+          ? `  distSL=${signal.sl_dist || '-'} distTP=${signal.tp_dist || '-'}`
           : '';
         console.log(
           `[${stamp}] SIGNAL #${published.id}  ${signal.from} -> ${signal.to}  ` +
-          `=> ${signal.action} ${mtSym}${sltp}  (${signal.reason})`,
+          `=> ${signal.action} ${mtSym}${sltp}`,
+        );
+        // Detail pour comparer avec ce qu'affiche TradingView.
+        console.log(
+          `           label declencheur: "${signal.reason}"  id=${signal.labelId}  ` +
+          `prixTV=${signal.price}  TF=${tvRes}`,
         );
       }
     } catch (e) {

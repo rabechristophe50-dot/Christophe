@@ -53,6 +53,9 @@ export class SignalDetector {
     this.shortRule = compileRule(this.ind.study_value?.short_when);
     this.flatRule = compileRule(this.ind.study_value?.flat_when);
     this.sltp = cfg.sltp || { enabled: false };
+    // Labels a NE JAMAIS traiter comme entree, meme s'ils contiennent buy/sell
+    // (ex. "BUY LIMIT" = ordre en attente, pas une entree immediate).
+    this.excludeKw = this.ind.exclude_keywords || [];
   }
 
   /**
@@ -125,6 +128,8 @@ export class SignalDetector {
     let newest = null;
     for (const st of studies) {
       for (const lb of st.labels || []) {
+        // Exclusions (ex. "BUY LIMIT") : jamais traites comme entree.
+        if (this.excludeKw.length && matchesAny(lb.text, this.excludeKw)) continue;
         let state = null;
         if (matchesAny(lb.text, this.ind.buy_keywords)) state = STATE.LONG;
         else if (matchesAny(lb.text, this.ind.sell_keywords)) state = STATE.SHORT;
@@ -249,6 +254,7 @@ export class SignalDetector {
       to: read.state,
       reason: read.reason || '',
       price: read.price ?? null,
+      labelId: read.labelId ?? null,
       sl_price,
       tp_price,
       sl_dist,

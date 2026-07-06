@@ -20,6 +20,8 @@
     "buy_keywords": ["buy", "long", "bull", "▲", "🟢", "call"],
     "sell_keywords": ["sell", "short", "bear", "▼", "🔴", "put"],
     "flat_keywords": ["close", "exit", "flat", "tp hit", "sl hit"],
+    "_comment_exclude": "Labels JAMAIS traites comme entree, meme s'ils contiennent buy/sell (ex. 'BUY LIMIT' = ordre en attente).",
+    "exclude_keywords": ["limit"],
 
     "_comment_study_value": "mode 'study_value' : on lit une valeur numerique de la fenetre de donnees (Data Window).",
     "study_value": {
