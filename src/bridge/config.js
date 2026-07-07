@@ -20,6 +20,7 @@ const DEFAULTS = {
     sell_keywords: ['sell', 'short'],
     flat_keywords: ['close', 'exit', 'flat'],
     exclude_keywords: ['limit'],
+    max_entry_pct: 0.5,
     study_value: { field: 'Signal', long_when: '> 0', short_when: '< 0', flat_when: '== 0' },
   },
   sltp: {

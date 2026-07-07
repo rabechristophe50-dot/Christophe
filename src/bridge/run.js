@@ -127,6 +127,24 @@ async function main() {
           console.warn(`[${stamp}] SIGNAL IGNORE (${signal.action}) : ${g.reason}`);
           continue;
         }
+        // Anti-repaint : un vrai signal est proche du prix actuel. Un vieux label
+        // redessine est loin -> on le rejette.
+        const maxPct = cfg.indicator.max_entry_pct;
+        if (maxPct > 0 && signal.price != null) {
+          let cur = null;
+          try { cur = (await data.getQuote({}))?.price ?? null; } catch { cur = null; }
+          if (cur != null && cur > 0) {
+            const diffPct = Math.abs(signal.price - cur) / cur * 100;
+            if (diffPct > maxPct) {
+              const stamp = new Date().toISOString().slice(11, 19);
+              console.warn(
+                `[${stamp}] SIGNAL IGNORE (${signal.action}) : label a ${signal.price} loin du prix ${cur} ` +
+                `(${diffPct.toFixed(2)}% > ${maxPct}%) - probable repaint`,
+              );
+              continue;
+            }
+          }
+        }
         const mtSym = mapSymbol(cfg, tvSym);
         const published = sink.publish({
           action: signal.action,
