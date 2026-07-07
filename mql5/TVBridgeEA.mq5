@@ -64,6 +64,17 @@ int OnInit()
    trade.SetDeviationInPoints(InpSlippage);
    trade.SetTypeFillingBySymbol(_Symbol);
    EventSetTimer(MathMax(1, InpTimerSeconds));
+
+   // Baseline : ne PAS retrader le signal deja present dans le fichier au
+   // demarrage (sinon on ouvre une position sur un vieux signal a chaque
+   // reattachement de l'EA). On memorise son id sans le trader.
+   string j0 = ReadSignal();
+   if(j0 != "")
+     {
+      long cur = (long)JsonNumber(j0, "id");
+      if(cur > 0) { g_lastId = cur; PrintFormat("Baseline: signal id=%d deja present, ignore au demarrage.", cur); }
+     }
+
    PrintFormat("TVBridgeEA demarre. Source=%s  Magic=%d  Trading=%s",
                InpUseHttp ? "HTTP" : "FICHIER:"+InpFileName,
                InpMagic, InpAllowTrading ? "ON" : "SIMULATION");
