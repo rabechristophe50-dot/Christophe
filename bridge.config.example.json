@@ -24,6 +24,8 @@
     "exclude_keywords": ["limit"],
     "_comment_max_entry": "Anti-repaint : ignore un signal dont le label est a plus de X% du prix actuel (vieux label redessine). 0 = desactive.",
     "max_entry_pct": 0.5,
+    "_comment_confirm": "Confirmation : le signal doit PERSISTER ce nb de secondes avant d'etre trade (filtre les signaux non confirmes qui disparaissent). Mets ~= la duree d'une bougie (60=M1, 300=M5) pour attendre la cloture. 0 = immediat.",
+    "confirm_seconds": 60,
 
     "_comment_study_value": "mode 'study_value' : on lit une valeur numerique de la fenetre de donnees (Data Window).",
     "study_value": {

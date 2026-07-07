@@ -56,6 +56,22 @@ export class SignalDetector {
     // Labels a NE JAMAIS traiter comme entree, meme s'ils contiennent buy/sell
     // (ex. "BUY LIMIT" = ordre en attente, pas une entree immediate).
     this.excludeKw = this.ind.exclude_keywords || [];
+    // Confirmation : un signal doit PERSISTER ce delai (secondes) avant d'etre
+    // trade. Filtre les signaux non confirmes qui repeignent/disparaissent.
+    this.confirmMs = (this.ind.confirm_seconds || 0) * 1000;
+    this.lastEmitted = null; // { state, price } du dernier signal envoye
+    this.pending = null;     // { state, price, reason, since } en attente de confirmation
+  }
+
+  /** Deux prix sont-ils "le meme niveau" ? (tolerance 0.2%) */
+  _priceClose(a, b) {
+    if (a == null || b == null) return true;
+    return Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b)) * 0.002;
+  }
+
+  /** Meme signal ? (meme sens ET meme niveau de prix) */
+  _sameSignal(a, b) {
+    return a && b && a.state === b.state && this._priceClose(a.price, b.price);
   }
 
   /**
@@ -184,54 +200,57 @@ export class SignalDetector {
    */
   async poll() {
     const mode = this.ind.mode || 'label';
-    let read = null;
-    if (mode === 'study_value') read = await this.readFromStudyValue();
-    else read = await this.readFromLabels();
+    const read = mode === 'study_value' ? await this.readFromStudyValue() : await this.readFromLabels();
+    if (!read || read.state == null) return null;
 
-    if (!read) return null;
+    const cur = { state: read.state, price: read.price ?? null, reason: read.reason || '', labelId: read.labelId ?? null };
 
-    // signal_mode :
-    //  - 'on_new_label'   : un trade a CHAQUE nouveau label d'entree (BUY HC,
-    //                       BUY, ... consecutifs = trades distincts). Ideal pour
-    //                       un indicateur qui empile les setups (ex. RUGA PRO).
-    //  - 'on_state_change': un trade seulement quand le SENS change (LONG<->SHORT).
-    const signalMode = mode === 'study_value' ? 'on_state_change'
-      : (this.ind.signal_mode || 'on_new_label');
-
-    // Securite au demarrage : on enregistre l'etat courant SANS trader, pour ne
-    // pas ouvrir une position sur le dernier signal HISTORIQUE (502 labels passes).
+    // Securite au demarrage : on enregistre l'etat courant SANS trader (ne pas
+    // ouvrir sur le dernier signal HISTORIQUE deja affiche).
     if (!this.initialized) {
       this.initialized = true;
-      this.lastLabelId = read.labelId ?? null;
-      this.lastState = read.state;
+      this.lastEmitted = { state: cur.state, price: cur.price };
       return null;
     }
 
-    let emit = false;
-    if (signalMode === 'on_new_label') {
-      if (read.labelId != null && read.labelId !== this.lastLabelId) emit = true;
-    } else if (read.state !== this.lastState) {
-      emit = true;
+    // --- Sans confirmation : comportement immediat ---------------------------
+    if (this.confirmMs <= 0) {
+      if (this._sameSignal(cur, this.lastEmitted)) return null; // deja trade
+      this.lastEmitted = { state: cur.state, price: cur.price };
+      return await this._buildSignal(cur);
     }
 
-    const prev = this.lastState;
-    if (read.labelId != null) this.lastLabelId = read.labelId;
-    this.lastState = read.state;
-    if (!emit) return null;
+    // --- Avec confirmation : le signal doit PERSISTER avant de trader --------
+    if (this.pending) {
+      if (this._sameSignal(cur, this.pending)) {
+        // Toujours affiche -> confirme si le delai est ecoule.
+        if (Date.now() - this.pending.since >= this.confirmMs) {
+          const p = this.pending;
+          this.pending = null;
+          this.lastEmitted = { state: p.state, price: p.price };
+          return await this._buildSignal(p);
+        }
+        return null; // encore en attente de confirmation
+      }
+      this.pending = null; // le signal a change/disparu -> repaint -> annule
+    }
 
-    // Traduire le signal en action MT5.
+    if (this._sameSignal(cur, this.lastEmitted)) return null; // deja trade, rien de neuf
+    // Nouveau candidat -> demarrer l'attente de confirmation.
+    this.pending = { state: cur.state, price: cur.price, reason: cur.reason, labelId: cur.labelId, since: Date.now() };
+    return null;
+  }
+
+  /** Construit l'objet signal (action + SL/TP) a partir d'un candidat. */
+  async _buildSignal(sig) {
     let action;
-    if (read.state === STATE.LONG) action = 'BUY';
-    else if (read.state === STATE.SHORT) action = 'SELL';
+    if (sig.state === STATE.LONG) action = 'BUY';
+    else if (sig.state === STATE.SHORT) action = 'SELL';
     else action = 'CLOSE';
 
-    let sl_price = 0;
-    let tp_price = 0;
-    let sl_dist = 0;
-    let tp_dist = 0;
+    let sl_price = 0, tp_price = 0, sl_dist = 0, tp_dist = 0;
     if (action !== 'CLOSE' && this.sltp?.enabled) {
-      // Prix d'entree : celui du label, sinon le prix marche courant.
-      let entryPrice = read.price;
+      let entryPrice = sig.price;
       if (entryPrice == null || entryPrice === 0) {
         try { entryPrice = (await this.data.getQuote({}))?.price ?? null; } catch { entryPrice = null; }
       }
@@ -240,25 +259,20 @@ export class SignalDetector {
           const lv = await this.readSlTp({ isBuy: action === 'BUY', entryPrice });
           sl_price = lv.sl_price;
           tp_price = lv.tp_price;
-          // Distances (en prix) depuis l'entree TV : robustes au decalage de flux
-          // entre TradingView et le broker. L'EA les applique au prix reel MT5.
           if (sl_price > 0) sl_dist = Math.round(Math.abs(entryPrice - sl_price) * 100) / 100;
           if (tp_price > 0) tp_dist = Math.round(Math.abs(entryPrice - tp_price) * 100) / 100;
-        } catch { /* SL/TP optionnels : on continue sans si echec */ }
+        } catch { /* SL/TP optionnels */ }
       }
     }
 
     return {
       action,
-      from: prev,
-      to: read.state,
-      reason: read.reason || '',
-      price: read.price ?? null,
-      labelId: read.labelId ?? null,
-      sl_price,
-      tp_price,
-      sl_dist,
-      tp_dist,
+      from: '',
+      to: sig.state,
+      reason: sig.reason || '',
+      price: sig.price ?? null,
+      labelId: sig.labelId ?? null,
+      sl_price, tp_price, sl_dist, tp_dist,
     };
   }
 }
