@@ -61,7 +61,32 @@ export class SignalDetector {
     this.confirmMs = (this.ind.confirm_seconds || 0) * 1000;
     this.lastEmitted = null; // { state, price } du dernier signal envoye
     this.pending = null;     // { state, price, reason, since } en attente de confirmation
+    this.seen = [];          // signaux DEJA connus (existants au demarrage + deja tradus)
     this.status = 'demarrage...'; // etat lisible pour le suivi en direct
+  }
+
+  /** Enregistre TOUS les signaux d'entree actuels comme "deja connus" (baseline). */
+  async _populateSeen() {
+    try {
+      const res = await this.data.getPineLabels({ study_filter: this.ind.study_filter, verbose: false, max_labels: 60 });
+      for (const st of res?.studies || []) {
+        for (const lb of st.labels || []) {
+          if (lb.price == null) continue;
+          if (this.excludeKw.length && matchesAny(lb.text, this.excludeKw)) continue;
+          let state = null;
+          if (matchesAny(lb.text, this.ind.buy_keywords)) state = STATE.LONG;
+          else if (matchesAny(lb.text, this.ind.sell_keywords)) state = STATE.SHORT;
+          else if (matchesAny(lb.text, this.ind.flat_keywords)) state = STATE.FLAT;
+          if (state === null) continue;
+          this.seen.push({ state, price: lb.price });
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  /** Ce signal est-il deja connu (existant au demarrage ou deja trade) ? */
+  _isKnown(sig) {
+    return this.seen.some((s) => this._sameSignal(s, sig));
   }
 
   /** Deux prix sont-ils "le meme niveau" ? (tolerance 0.2%) */
@@ -207,46 +232,50 @@ export class SignalDetector {
     const cur = { state: read.state, price: read.price ?? null, reason: read.reason || '', labelId: read.labelId ?? null };
     const dir = cur.state === STATE.LONG ? 'BUY' : cur.state === STATE.SHORT ? 'SELL' : 'FLAT';
 
-    // Option baseline : ignorer le signal deja affiche au demarrage (defaut: NON,
-    // on trade le signal actif courant).
-    if (this.ind.baseline_on_start === true && !this.initialized) {
+    // Au demarrage : on enregistre TOUS les signaux deja affiches (baseline) pour
+    // ne PAS les trader. On n'entrera que sur un NOUVEAU signal.
+    if (!this.initialized) {
       this.initialized = true;
-      this.lastEmitted = { state: cur.state, price: cur.price };
-      this.status = `baseline demarrage : ${dir} @${cur.price} ignore`;
+      await this._populateSeen();
+      this.status = `demarrage : ${this.seen.length} signaux existants ignores, en attente d'un NOUVEAU`;
       return null;
     }
-    this.initialized = true;
 
-    // --- Sans confirmation : comportement immediat ---------------------------
+    // Signal deja connu (existait au demarrage, ou deja trade) -> on ignore.
+    if (this._isKnown(cur)) {
+      this.pending = null;
+      this.status = `signal actif ${dir} @${cur.price} (deja connu -> on attend un NOUVEAU signal)`;
+      return null;
+    }
+
+    // --- NOUVEAU signal, entree IMMEDIATE (confirm_seconds = 0) ---------------
     if (this.confirmMs <= 0) {
-      if (this._sameSignal(cur, this.lastEmitted)) { this.status = `signal actif ${dir} @${cur.price} (deja pris)`; return null; }
-      this.lastEmitted = { state: cur.state, price: cur.price };
-      this.status = `>>> SIGNAL ${dir} @${cur.price} envoye`;
+      this._remember(cur);
+      this.status = `>>> NOUVEAU SIGNAL ${dir} @${cur.price} -> envoye a MT5 (immediat)`;
       return await this._buildSignal(cur);
     }
 
-    // --- Avec confirmation : le signal doit PERSISTER avant de trader --------
-    if (this.pending) {
-      if (this._sameSignal(cur, this.pending)) {
-        const remaining = Math.ceil((this.confirmMs - (Date.now() - this.pending.since)) / 1000);
-        if (remaining <= 0) {
-          const p = this.pending;
-          this.pending = null;
-          this.lastEmitted = { state: p.state, price: p.price };
-          this.status = `>>> SIGNAL ${dir} @${cur.price} CONFIRME et envoye`;
-          return await this._buildSignal(p);
-        }
-        this.status = `confirmation ${dir} @${cur.price} : ${remaining}s restantes`;
-        return null;
+    // --- NOUVEAU signal, avec confirmation (le signal doit persister) ---------
+    if (this.pending && this._sameSignal(cur, this.pending)) {
+      const remaining = Math.ceil((this.confirmMs - (Date.now() - this.pending.since)) / 1000);
+      if (remaining <= 0) {
+        this.pending = null;
+        this._remember(cur);
+        this.status = `>>> NOUVEAU SIGNAL ${dir} @${cur.price} CONFIRME -> envoye a MT5`;
+        return await this._buildSignal(cur);
       }
-      this.pending = null; // le signal a change/disparu -> repaint -> annule
+      this.status = `confirmation ${dir} @${cur.price} : ${remaining}s restantes`;
+      return null;
     }
-
-    if (this._sameSignal(cur, this.lastEmitted)) { this.status = `signal actif ${dir} @${cur.price} (deja pris)`; return null; }
-    // Nouveau candidat -> demarrer l'attente de confirmation.
     this.pending = { state: cur.state, price: cur.price, reason: cur.reason, labelId: cur.labelId, since: Date.now() };
     this.status = `nouveau signal ${dir} @${cur.price} -> attente confirmation (${Math.round(this.confirmMs / 1000)}s)`;
     return null;
+  }
+
+  /** Marque un signal comme connu/trade (borne la taille de la liste). */
+  _remember(sig) {
+    this.seen.push({ state: sig.state, price: sig.price });
+    if (this.seen.length > 300) this.seen = this.seen.slice(-300);
   }
 
   /** Construit l'objet signal (action + SL/TP) a partir d'un candidat. */
