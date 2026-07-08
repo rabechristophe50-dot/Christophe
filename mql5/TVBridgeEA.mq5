@@ -23,6 +23,7 @@ input int    InpTpPoints      = 0;                // take profit en points (0 = 
 input int    InpSlippage      = 20;               // deviation max en points
 input long   InpMagic         = 88112277;         // magic number
 input bool   InpCloseOpposite = true;             // fermer la position inverse avant d'ouvrir
+input bool   InpOnePositionAtATime = true;        // laisser courir la position jusqu'au SL/TP (ignore les signaux tant qu'une est ouverte)
 input bool   InpAllowTrading  = true;             // false = mode simulation (log sans ordre reel)
 input bool   InpShowDrawings  = true;             // afficher les lignes/labels de l'indicateur TV
 input string InpDrawFile      = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
@@ -169,6 +170,16 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
    if(InpMaxTradesDay > 0 && g_tradesToday >= InpMaxTradesDay)
      { PrintFormat("Limite de %d trades/jour atteinte -> trade ignore.", InpMaxTradesDay); return; }
 
+   // Une position a la fois : si une position de cet EA est deja ouverte sur ce
+   // symbole, on la LAISSE COURIR jusqu'a son SL/TP et on ignore le nouveau
+   // signal (evite de sortir avant le TP/SL sur un signal inverse).
+   if(InpOnePositionAtATime && CountMyPositions(symbol) > 0)
+     {
+      PrintFormat("Position deja ouverte sur %s -> on la laisse courir jusqu'au SL/TP, signal %s ignore.",
+                  symbol, action);
+      return;
+     }
+
    if(InpCloseOpposite)
       ClosePositionsByType(symbol, isBuy ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
 
@@ -229,6 +240,21 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
 //+------------------------------------------------------------------+
 //| Aides positions                                                  |
 //+------------------------------------------------------------------+
+// Nombre de positions de cet EA (meme magic) sur le symbole.
+int CountMyPositions(string symbol)
+  {
+   int c = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      c++;
+     }
+   return c;
+  }
+
 bool HasPosition(string symbol, ENUM_POSITION_TYPE type)
   {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
