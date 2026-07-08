@@ -127,43 +127,43 @@ export class SignalDetector {
     return { sl_price, tp_price };
   }
 
-  /** Determine l'etat cible depuis les labels dessines par l'indicateur. */
+  /** Determine le signal actif depuis les labels dessines par l'indicateur. */
   async readFromLabels() {
     const res = await this.data.getPineLabels({
       study_filter: this.ind.study_filter,
       verbose: true,
-      max_labels: 20,
+      max_labels: 60,
     });
     const studies = res?.studies || [];
     if (studies.length === 0) return null;
 
-    // Classer chaque label. IMPORTANT : l'indicateur dessine aussi des labels
-    // SL et TP (souvent avec un id PLUS RECENT que l'entree). On ne retient que
-    // les labels qui sont de VRAIS signaux d'entree/sortie, puis on prend le
-    // plus recent de CEUX-LA — sinon on confondrait le TP avec le signal.
-    let newest = null;
+    // Prix marche courant : le signal ACTIF de l'indicateur est celui dessine
+    // le plus PRES du prix actuel (les autres labels sont d'anciens signaux).
+    let curPrice = null;
+    try { curPrice = (await this.data.getQuote({}))?.price ?? null; } catch { curPrice = null; }
+
+    // On ne retient que les VRAIS labels d'entree (buy/sell/flat, hors exclus),
+    // puis on garde celui le plus proche du prix (ou le plus grand id si pas de prix).
+    let best = null;
     for (const st of studies) {
       for (const lb of st.labels || []) {
-        // Exclusions (ex. "BUY LIMIT") : jamais traites comme entree.
         if (this.excludeKw.length && matchesAny(lb.text, this.excludeKw)) continue;
         let state = null;
         if (matchesAny(lb.text, this.ind.buy_keywords)) state = STATE.LONG;
         else if (matchesAny(lb.text, this.ind.sell_keywords)) state = STATE.SHORT;
         else if (matchesAny(lb.text, this.ind.flat_keywords)) state = STATE.FLAT;
-        if (state === null) continue; // label SL/TP/autre -> ignore comme signal
+        if (state === null) continue; // label SL/TP/autre -> pas un signal
         const id = Number(lb.id);
-        if (newest === null || id > newest.id) {
-          newest = { id, text: lb.text, price: lb.price, state };
+        const dist = (curPrice != null && lb.price != null) ? Math.abs(lb.price - curPrice) : null;
+        if (best === null
+          || (dist != null && best.dist != null && dist < best.dist)
+          || (dist == null && best.dist == null && id > best.id)) {
+          best = { id, text: lb.text, price: lb.price, state, dist };
         }
       }
     }
-    if (!newest) return null;
-
-    // Meme signal qu'au dernier tick -> rien de neuf.
-    if (this.lastLabelId !== null && newest.id === this.lastLabelId) {
-      return { state: this.lastState, labelId: newest.id, fresh: false, reason: newest.text };
-    }
-    return { state: newest.state, labelId: newest.id, fresh: true, reason: newest.text, price: newest.price };
+    if (!best) return null;
+    return { state: best.state, labelId: best.id, reason: best.text, price: best.price };
   }
 
   /** Determine l'etat cible depuis une valeur numerique de la Data Window. */
