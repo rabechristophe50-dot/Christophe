@@ -24,6 +24,7 @@ input int    InpSlippage      = 20;               // deviation max en points
 input long   InpMagic         = 88112277;         // magic number
 input bool   InpCloseOpposite = true;             // fermer la position inverse avant d'ouvrir
 input bool   InpOnePositionAtATime = true;        // laisser courir la position jusqu'au SL/TP (ignore les signaux tant qu'une est ouverte)
+input bool   InpAllowStacking = false;            // true = ouvrir une position a CHAQUE signal (empilement, compte hedging requis)
 input bool   InpAllowTrading  = true;             // false = mode simulation (log sans ordre reel)
 input bool   InpShowDrawings  = true;             // afficher les lignes/labels de l'indicateur TV
 input string InpDrawFile      = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
@@ -183,8 +184,8 @@ void Execute(string action, string symbol, double lot, int slPts, int tpPts,
    if(InpCloseOpposite)
       ClosePositionsByType(symbol, isBuy ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
 
-   // Deja dans le bon sens ? ne pas empiler.
-   if(HasPosition(symbol, isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL))
+   // Empilement : si desactive, on n'ouvre pas une 2e position dans le meme sens.
+   if(!InpAllowStacking && HasPosition(symbol, isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL))
      {
       PrintFormat("Position %s deja ouverte sur %s, on ignore.", action, symbol);
       return;
