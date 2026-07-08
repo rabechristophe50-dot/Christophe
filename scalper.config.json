@@ -1,0 +1,38 @@
+{
+  "symbol": "XRPUSDT",
+  "timeframe": 1,
+  "pollMs": 5000,
+  "mode": "paper",
+
+  "strategies": {
+    "emaTrend": { "weight": 1.0, "fast": 8, "slow": 21, "trend": 50 },
+    "vwapReversion": { "weight": 0.8, "stretch": 0.0015 },
+    "rsiReversal": { "weight": 1.0, "period": 2, "buy": 10, "sell": 90, "trend": 50 },
+    "bollingerBreakout": { "weight": 0.9, "period": 20, "mult": 2, "squeeze": 0.02 },
+    "macdMomentum": { "weight": 0.8, "adxMin": 20 }
+  },
+
+  "entryThreshold": 1.2,
+
+  "risk": {
+    "riskPctPerTrade": 0.01,
+    "maxNotionalPct": 0.5,
+    "atrPeriod": 14,
+    "slAtrMult": 1.5,
+    "tpAtrMult": 2.0,
+    "trailAtrMult": 1.0,
+    "useTrailing": true,
+    "maxDailyLossPct": 0.05,
+    "maxDrawdownPct": 0.1,
+    "maxConsecLosses": 5,
+    "feeRate": 0.001
+  },
+
+  "paper": {
+    "startEquity": 1000
+  },
+
+  "allowShorts": false,
+  "maxTicks": 0,
+  "logFile": "scalper-log.json"
+}
