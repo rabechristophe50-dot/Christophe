@@ -61,6 +61,7 @@ export class SignalDetector {
     this.confirmMs = (this.ind.confirm_seconds || 0) * 1000;
     this.lastEmitted = null; // { state, price } du dernier signal envoye
     this.pending = null;     // { state, price, reason, since } en attente de confirmation
+    this.status = 'demarrage...'; // etat lisible pour le suivi en direct
   }
 
   /** Deux prix sont-ils "le meme niveau" ? (tolerance 0.2%) */
@@ -201,43 +202,50 @@ export class SignalDetector {
   async poll() {
     const mode = this.ind.mode || 'label';
     const read = mode === 'study_value' ? await this.readFromStudyValue() : await this.readFromLabels();
-    if (!read || read.state == null) return null;
+    if (!read || read.state == null) { this.status = 'aucun signal RUGA lu (TV connecte ? indicateur visible ?)'; return null; }
 
     const cur = { state: read.state, price: read.price ?? null, reason: read.reason || '', labelId: read.labelId ?? null };
+    const dir = cur.state === STATE.LONG ? 'BUY' : cur.state === STATE.SHORT ? 'SELL' : 'FLAT';
 
-    // Securite au demarrage : on enregistre l'etat courant SANS trader (ne pas
-    // ouvrir sur le dernier signal HISTORIQUE deja affiche).
-    if (!this.initialized) {
+    // Option baseline : ignorer le signal deja affiche au demarrage (defaut: NON,
+    // on trade le signal actif courant).
+    if (this.ind.baseline_on_start === true && !this.initialized) {
       this.initialized = true;
       this.lastEmitted = { state: cur.state, price: cur.price };
+      this.status = `baseline demarrage : ${dir} @${cur.price} ignore`;
       return null;
     }
+    this.initialized = true;
 
     // --- Sans confirmation : comportement immediat ---------------------------
     if (this.confirmMs <= 0) {
-      if (this._sameSignal(cur, this.lastEmitted)) return null; // deja trade
+      if (this._sameSignal(cur, this.lastEmitted)) { this.status = `signal actif ${dir} @${cur.price} (deja pris)`; return null; }
       this.lastEmitted = { state: cur.state, price: cur.price };
+      this.status = `>>> SIGNAL ${dir} @${cur.price} envoye`;
       return await this._buildSignal(cur);
     }
 
     // --- Avec confirmation : le signal doit PERSISTER avant de trader --------
     if (this.pending) {
       if (this._sameSignal(cur, this.pending)) {
-        // Toujours affiche -> confirme si le delai est ecoule.
-        if (Date.now() - this.pending.since >= this.confirmMs) {
+        const remaining = Math.ceil((this.confirmMs - (Date.now() - this.pending.since)) / 1000);
+        if (remaining <= 0) {
           const p = this.pending;
           this.pending = null;
           this.lastEmitted = { state: p.state, price: p.price };
+          this.status = `>>> SIGNAL ${dir} @${cur.price} CONFIRME et envoye`;
           return await this._buildSignal(p);
         }
-        return null; // encore en attente de confirmation
+        this.status = `confirmation ${dir} @${cur.price} : ${remaining}s restantes`;
+        return null;
       }
       this.pending = null; // le signal a change/disparu -> repaint -> annule
     }
 
-    if (this._sameSignal(cur, this.lastEmitted)) return null; // deja trade, rien de neuf
+    if (this._sameSignal(cur, this.lastEmitted)) { this.status = `signal actif ${dir} @${cur.price} (deja pris)`; return null; }
     // Nouveau candidat -> demarrer l'attente de confirmation.
     this.pending = { state: cur.state, price: cur.price, reason: cur.reason, labelId: cur.labelId, since: Date.now() };
+    this.status = `nouveau signal ${dir} @${cur.price} -> attente confirmation (${Math.round(this.confirmMs / 1000)}s)`;
     return null;
   }
 

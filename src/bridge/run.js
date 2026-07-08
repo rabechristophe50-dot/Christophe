@@ -82,6 +82,7 @@ async function main() {
     console.log(`[bridge] Garde-fou: ${guard.symbol || '(tout symbole)'} en ${(guard.timeframes || []).join('/') || '(tout TF)'}`);
   }
   let lastRes = null;
+  let lastStatus = null;
 
   let consecutiveErrors = 0;
   while (running) {
@@ -100,6 +101,13 @@ async function main() {
 
       const signal = await detector.poll();
       consecutiveErrors = 0;
+
+      // Suivi en direct : afficher l'etat du detecteur quand il change.
+      if (detector.status && detector.status !== lastStatus) {
+        lastStatus = detector.status;
+        const stamp = new Date().toISOString().slice(11, 19);
+        console.log(`[${stamp}] etat: ${detector.status}`);
+      }
 
       if (drawCfg.enabled && t0 - lastDraw >= (drawCfg.refresh_ms || 3000)) {
         lastDraw = t0;
