@@ -8,6 +8,9 @@ strictement identique, réglés pour l'**OR (XAUUSD) en 5 min et 15 min** :
 | **Stratégie** (backtest) | [`ifvg_bot.pine`](./ifvg_bot.pine) | Pine Script v6 : backtest, entrées/SL/TP auto, Strategy Tester |
 | **Indicateur d'entrée** | [`ifvg_indicator.pine`](./ifvg_indicator.pine) | Affiche les entrées (flèches), zones IFVG, TP/SL + **alertes** (dont JSON webhook) |
 | **Bot live** (exécution) | [`../ifvg-bot.js`](../ifvg-bot.js) | Lit le chart TradingView live (CDP), émet les signaux et passe les ordres |
+| **EA MT5 natif** | [`../mt5/IFVG_EA.mq5`](../mt5/IFVG_EA.mq5) | Expert Advisor MQL5 : détecte l'IFVG **et** exécute sur MetaTrader 5 |
+| **cBot cTrader natif** | [`../ctrader/IFVGBot.cs`](../ctrader/IFVGBot.cs) | cBot cAlgo (C#) : détecte l'IFVG **et** exécute sur cTrader |
+| **Bridge webhook** | [`../bridge/webhook-bridge.js`](../bridge/webhook-bridge.js) | Reçoit l'alerte TradingView et la dépose en fichier d'ordre pour MT5/cTrader |
 
 > Réglage OR 5/15m : la taille minimale de FVG est filtrée par **ATR(14)** (`0.25 × ATR`),
 > donc le setup s'auto-adapte entre le 5 min et le 15 min sans retoucher de valeur en points.
@@ -111,4 +114,30 @@ Config `CFG.broker` :
 - **Exiger 1 seul FVG** — applique strictement la règle #2.
 - **Cible = ERL (swing)** — vise la liquidité externe ; sinon R:R fixe.
 
-> ⚠️ Outil d'aide à la décision / backtest. Teste en démo avant tout usage réel.
+## Versions natives MT5 & cTrader
+
+Pour tourner **directement** sur ta plateforme (sans TradingView) :
+
+### MetaTrader 5 — `mt5/IFVG_EA.mq5`
+1. MetaEditor → ouvre `IFVG_EA.mq5` → **Compiler** (F7).
+2. Attache l'EA au graphique **XAUUSD** en 5m ou 15m, autorise le trading algo.
+3. Règle les inputs : `InpRiskUsd`, `InpPivotLen` (8 en 5m, 10-12 en 15m), etc.
+   → l'EA détecte l'IFVG et passe l'ordre (entrée + SL/TP), taille selon le risque $.
+
+### cTrader — `ctrader/IFVGBot.cs`
+1. cTrader → Automate → nouveau cBot → colle le contenu de `IFVGBot.cs` → **Build**.
+2. Lance sur **XAUUSD** 5m/15m, ajuste les paramètres.
+   → même logique, exécution native via `ExecuteMarketOrder` avec SL/TP.
+
+### Garder TradingView (indicateur) + bridge — `bridge/webhook-bridge.js`
+1. `node bridge/webhook-bridge.js` (config via env : `BRIDGE_PORT`, `BRIDGE_TOKEN`, `BRIDGE_DROPFILE`).
+2. Dans l'alerte TradingView (*Any alert() function call* de l'indicateur), mets l'URL :
+   `http://TON_IP:8080/webhook?token=changeme` (TradingView doit joindre ta machine → IP publique ou tunnel ngrok/cloudflared).
+3. Le bridge écrit chaque ordre dans `ifvg_order.txt` (CSV : `side,symbol,entry,sl,tp,riskUsd,timeframe`)
+   dans le dossier *Files* de MT5 → un petit EA lecteur de fichier exécute l'ordre.
+
+> Les EA natifs (MT5/cTrader) sont **autonomes** : ils ne dépendent ni de TradingView ni du bridge.
+> Le bridge ne sert que si tu veux garder la détection sur TradingView.
+
+> ⚠️ Outil d'aide à la décision / backtest. Teste en **démo** avant tout usage réel.
+> Vérifie le dimensionnement (`RiskUsd`), le symbole exact du broker et les permissions de trading.
