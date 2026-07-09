@@ -61,7 +61,9 @@ export class SignalDetector {
     this.confirmMs = (this.ind.confirm_seconds || 0) * 1000;
     this.lastEmitted = null; // { state, price } du dernier signal envoye
     this.pending = null;     // { state, price, reason, since } en attente de confirmation
-    this.lastDir = null;     // dernier SENS trade (LONG/SHORT) -> on trade au changement
+    this.lastDir = null;     // (mode study_value) dernier sens trade
+    this.seenIds = new Set();// ids des labels DEJA affiches (baseline) ou deja tradus
+    this.lastKey = null;     // "sens@prix-arrondi" du dernier signal envoye (anti-doublon)
     this.status = 'demarrage...'; // etat lisible pour le suivi en direct
   }
 
@@ -224,52 +226,85 @@ export class SignalDetector {
    * Poll une fois. Retourne un objet signal SEULEMENT quand l'etat change,
    * sinon null.
    */
+  /** Retourne TOUS les labels d'entree actuels (avec leur id). */
+  async readAllEntries() {
+    const res = await this.data.getPineLabels({ study_filter: this.ind.study_filter, verbose: true, max_labels: 60 });
+    const out = [];
+    for (const st of res?.studies || []) {
+      for (const lb of st.labels || []) {
+        if (lb.price == null) continue;
+        if (this.excludeKw.length && matchesAny(lb.text, this.excludeKw)) continue;
+        let state = null;
+        if (matchesAny(lb.text, this.ind.buy_keywords)) state = STATE.LONG;
+        else if (matchesAny(lb.text, this.ind.sell_keywords)) state = STATE.SHORT;
+        else if (matchesAny(lb.text, this.ind.flat_keywords)) state = STATE.FLAT;
+        if (state === null) continue;
+        out.push({ id: Number(lb.id), state, price: lb.price, reason: lb.text });
+      }
+    }
+    return out;
+  }
+
   async poll() {
-    const mode = this.ind.mode || 'label';
-    const read = mode === 'study_value' ? await this.readFromStudyValue() : await this.readFromLabels();
-    if (!read || read.state == null) { this.status = 'aucun signal RUGA lu (TV connecte ? indicateur visible ?)'; return null; }
+    if ((this.ind.mode || 'label') === 'study_value') return this._pollStudyValue();
 
-    const cur = { state: read.state, price: read.price ?? null, reason: read.reason || '', labelId: read.labelId ?? null };
-    const dir = cur.state === STATE.LONG ? 'BUY' : cur.state === STATE.SHORT ? 'SELL' : 'FLAT';
+    const entries = await this.readAllEntries();
+    if (entries.length === 0) { this.status = 'aucun signal RUGA lu (TV connecte ? indicateur visible ?)'; return null; }
 
-    // Regle simple et FIABLE : on trade des que le SENS du signal actif change
-    // (BUY <-> SELL). Au demarrage on note juste le sens courant, sans trader.
+    // Prix courant (pour ne garder que les signaux proches = vraiment actifs).
+    let curPrice = null;
+    try { curPrice = (await this.data.getQuote({}))?.price ?? null; } catch { curPrice = null; }
+    const maxPct = this.ind.max_entry_pct > 0 ? this.ind.max_entry_pct : 0.5;
+
+    // DEMARRAGE : on enregistre TOUS les labels deja affiches -> on ne les trade pas.
     if (!this.initialized) {
       this.initialized = true;
-      this.lastDir = cur.state;
-      this.status = `demarrage : sens actuel ${dir} (on attend un CHANGEMENT de sens pour trader)`;
+      for (const e of entries) this.seenIds.add(e.id);
+      this.status = `demarrage : ${entries.length} signaux deja affiches ignores, en attente d'un NOUVEAU`;
       return null;
     }
 
-    // Meme sens qu'avant -> rien a faire.
-    if (cur.state === this.lastDir) {
-      this.pending = null;
-      this.status = `sens actuel ${dir} @${cur.price} (inchange -> on attend un flip BUY<->SELL)`;
+    // NOUVEAUX labels (id jamais vu) ET proches du prix actuel.
+    const fresh = entries.filter((e) => {
+      if (this.seenIds.has(e.id)) return false;
+      if (curPrice != null && Math.abs(e.price - curPrice) / curPrice * 100 > maxPct) return false;
+      return true;
+    });
+
+    if (fresh.length === 0) {
+      // memoriser les nouveaux labels LOINTAINS pour ne pas les trader plus tard.
+      for (const e of entries) if (!this.seenIds.has(e.id) && curPrice != null
+        && Math.abs(e.price - curPrice) / curPrice * 100 > maxPct) this.seenIds.add(e.id);
+      this.status = `aucun nouveau signal proche du prix (en attente)`;
       return null;
     }
 
-    // --- Le sens a CHANGE -> nouveau signal ----------------------------------
-    if (this.confirmMs <= 0) {
-      this.lastDir = cur.state;
-      this.status = `>>> CHANGEMENT DE SENS -> ${dir} @${cur.price} envoye a MT5 (immediat)`;
-      return await this._buildSignal(cur);
-    }
+    // On prend le plus proche du prix. Les autres nouveaux seront pris aux polls suivants.
+    fresh.sort((a, b) => Math.abs(a.price - (curPrice ?? a.price)) - Math.abs(b.price - (curPrice ?? b.price)));
+    const pick = fresh[0];
+    const dir = pick.state === STATE.LONG ? 'BUY' : pick.state === STATE.SHORT ? 'SELL' : 'FLAT';
+    const key = `${pick.state}@${Math.round(pick.price)}`;
 
-    // Avec confirmation : le nouveau sens doit persister.
-    if (this.pending && this.pending.state === cur.state) {
-      const remaining = Math.ceil((this.confirmMs - (Date.now() - this.pending.since)) / 1000);
-      if (remaining <= 0) {
-        this.pending = null;
-        this.lastDir = cur.state;
-        this.status = `>>> ${dir} @${cur.price} CONFIRME -> envoye a MT5`;
-        return await this._buildSignal(cur);
-      }
-      this.status = `flip vers ${dir} @${cur.price} : confirmation ${remaining}s`;
+    this.seenIds.add(pick.id);
+    if (key === this.lastKey) { // anti-doublon si l'indicateur reattribue les ids
+      this.status = `signal ${dir} @${pick.price} deja pris (id renouvele)`;
       return null;
     }
-    this.pending = { state: cur.state, price: cur.price, reason: cur.reason, labelId: cur.labelId, since: Date.now() };
-    this.status = `flip vers ${dir} @${cur.price} -> attente confirmation (${Math.round(this.confirmMs / 1000)}s)`;
-    return null;
+    this.lastKey = key;
+    this.status = `>>> NOUVEAU SIGNAL ${dir} @${pick.price} (id ${pick.id}) -> envoye a MT5`;
+    return await this._buildSignal(pick);
+  }
+
+  /** Mode study_value : on trade au changement de sens. */
+  async _pollStudyValue() {
+    const read = await this.readFromStudyValue();
+    if (!read || read.state == null) { this.status = 'aucune valeur lue'; return null; }
+    const dir = read.state === STATE.LONG ? 'BUY' : read.state === STATE.SHORT ? 'SELL' : 'FLAT';
+    if (!this.initialized) { this.initialized = true; this.lastDir = read.state; this.status = `demarrage : sens ${dir}`; return null; }
+    if (read.state === this.lastDir) { this.status = `sens ${dir} (inchange)`; return null; }
+    this.lastDir = read.state;
+    this.status = `>>> CHANGEMENT DE SENS -> ${dir}`;
+    return await this._buildSignal({ state: read.state, price: read.price ?? null, reason: read.reason });
   }
 
   /** Construit l'objet signal (action + SL/TP) a partir d'un candidat. */
