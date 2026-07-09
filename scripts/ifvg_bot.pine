@@ -1,0 +1,192 @@
+//@version=6
+// ════════════════════════════════════════════════════════════════════════
+//  IFVG BOT — "Comment bien trader les IFVG ?"
+//  Concept ICT : Inverse Fair Value Gap
+//
+//  Les 4 règles respectées (d'après la note) :
+//   1. PRISE DE LIQUIDITÉ AVANT L'IFVG  → sweep d'un swing (buyside/sellside)
+//   2. 1 FVG -> IFVG (pas plusieurs FVG) → filtre "FVG unique" dans la fenêtre
+//   3. CLÔTURE CORPS EN DESSOUS/AU-DESSUS → inversion confirmée par la clôture
+//   4. TARGET CLAIRE = IRL TO ERL        → cible = liquidité externe opposée
+// ════════════════════════════════════════════════════════════════════════
+strategy("IFVG Bot — IRL to ERL", overlay=true, initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     commission_type=strategy.commission.percent, commission_value=0.02,
+     slippage=1, calc_on_every_tick=false, max_boxes_count=100,
+     max_lines_count=100, max_labels_count=100)
+
+// ── Inputs ──────────────────────────────────────────────────────────────
+grpSetup   = "Setup"
+pivotLen   = input.int(10, "Longueur des swings (liquidité)", minval=2, group=grpSetup)
+windowBars = input.int(15, "Fenêtre max entre sweep et IFVG (bougies)", minval=3, group=grpSetup)
+requireSingleFVG = input.bool(true, "Exiger 1 seul FVG (règle #2)", group=grpSetup)
+minFvgTicks = input.float(0.0, "Taille min du FVG (points, 0 = off)", minval=0.0, group=grpSetup)
+
+grpRisk    = "Risque & Cibles"
+useSwingTP = input.bool(true, "Cible = liquidité externe / ERL (swing)", group=grpRisk)
+rrFallback = input.float(2.0, "R:R si pas de swing dispo", minval=0.5, step=0.5, group=grpRisk)
+slPad      = input.float(0.1, "Marge du stop au-delà de l'IFVG (%)", minval=0.0, step=0.05, group=grpRisk)
+
+grpDir     = "Direction"
+allowLongs  = input.bool(true, "Autoriser les LONGs", group=grpDir)
+allowShorts = input.bool(true, "Autoriser les SHORTs", group=grpDir)
+
+grpViz     = "Visuel"
+showFVG    = input.bool(true, "Afficher les zones IFVG", group=grpViz)
+showLevels = input.bool(true, "Afficher TP/SL", group=grpViz)
+
+// ── 1. Liquidité : swings + détection du sweep ──────────────────────────
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na   // buyside liquidity (ERL au-dessus)
+var float lastSwingLow  = na   // sellside liquidity (ERL en dessous)
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+// Sweep = la mèche prend la liquidité puis la bougie referme du bon côté
+sellsideSweep = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow
+buysideSweep  = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+// ── 2. Fair Value Gaps (3 bougies) ──────────────────────────────────────
+// FVG haussier : gap entre high[2] et low[0]  (déséquilibre vers le haut)
+// FVG baissier : gap entre low[2]  et high[0] (déséquilibre vers le bas)
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+bullFvgTop = low
+bullFvgBot = high[2]
+bearFvgTop = low[2]
+bearFvgBot = high
+
+bigEnough(t, b) => minFvgTicks <= 0.0 or (t - b) >= minFvgTicks
+bullFVGok = bullFVG and bigEnough(bullFvgTop, bullFvgBot)
+bearFVGok = bearFVG and bigEnough(bearFvgTop, bearFvgBot)
+
+// ════════════════════════════════════════════════════════════════════════
+//  MACHINE À ÉTATS — LONG (IFVG haussier)
+//  sellside sweep → FVG baissier se forme → clôture corps AU-DESSUS = IFVG
+// ════════════════════════════════════════════════════════════════════════
+var int   lState   = 0       // 0 idle · 1 swept · 2 FVG posé
+var float lFvgTop  = na
+var float lFvgBot  = na
+var int   lFvgCnt  = 0
+var int   lExpiry  = 0
+var float lSweepLow = na
+
+if sellsideSweep and allowLongs
+    lState  := 1
+    lExpiry := bar_index + windowBars
+    lFvgCnt := 0
+    lFvgTop := na
+    lFvgBot := na
+    lSweepLow := low
+
+if lState >= 1 and bar_index > lExpiry
+    lState := 0
+
+if lState == 1 and bearFVGok
+    lFvgCnt  += 1
+    lFvgTop  := bearFvgTop
+    lFvgBot  := bearFvgBot
+    lState   := 2
+else if lState == 2 and bearFVGok
+    // un 2e FVG apparaît → cluster de FVG
+    lFvgCnt += 1
+    if requireSingleFVG
+        lState := 0               // règle #2 : on ne veut pas plusieurs FVG
+    else
+        lFvgTop := bearFvgTop
+        lFvgBot := bearFvgBot
+
+// Inversion : clôture (corps) au-dessus du FVG baissier → IFVG haussier
+longSignal = lState == 2 and close > lFvgTop and close > open
+var float lEntry = na
+var float lSL = na
+var float lTP = na
+if longSignal
+    lEntry := close
+    lSL := math.min(lFvgBot, nz(lSweepLow, lFvgBot)) * (1 - slPad / 100.0)
+    risk = lEntry - lSL
+    lTP := useSwingTP and not na(lastSwingHigh) and lastSwingHigh > lEntry ?
+             lastSwingHigh : lEntry + risk * rrFallback
+    if risk > 0
+        strategy.entry("LONG", strategy.long)
+        strategy.exit("L-exit", "LONG", stop=lSL, limit=lTP)
+    lState := 0
+
+// ════════════════════════════════════════════════════════════════════════
+//  MACHINE À ÉTATS — SHORT (IFVG baissier)
+//  buyside sweep → FVG haussier se forme → clôture corps EN-DESSOUS = IFVG
+// ════════════════════════════════════════════════════════════════════════
+var int   sState   = 0
+var float sFvgTop  = na
+var float sFvgBot  = na
+var int   sFvgCnt  = 0
+var int   sExpiry  = 0
+var float sSweepHigh = na
+
+if buysideSweep and allowShorts
+    sState  := 1
+    sExpiry := bar_index + windowBars
+    sFvgCnt := 0
+    sFvgTop := na
+    sFvgBot := na
+    sSweepHigh := high
+
+if sState >= 1 and bar_index > sExpiry
+    sState := 0
+
+if sState == 1 and bullFVGok
+    sFvgCnt += 1
+    sFvgTop := bullFvgTop
+    sFvgBot := bullFvgBot
+    sState  := 2
+else if sState == 2 and bullFVGok
+    sFvgCnt += 1
+    if requireSingleFVG
+        sState := 0
+    else
+        sFvgTop := bullFvgTop
+        sFvgBot := bullFvgBot
+
+// Inversion : clôture (corps) en-dessous du FVG haussier → IFVG baissier
+shortSignal = sState == 2 and close < sFvgBot and close < open
+var float sEntry = na
+var float sSL = na
+var float sTP = na
+if shortSignal
+    sEntry := close
+    sSL := math.max(sFvgTop, nz(sSweepHigh, sFvgTop)) * (1 + slPad / 100.0)
+    risk = sSL - sEntry
+    sTP := useSwingTP and not na(lastSwingLow) and lastSwingLow < sEntry ?
+             lastSwingLow : sEntry - risk * rrFallback
+    if risk > 0
+        strategy.entry("SHORT", strategy.short)
+        strategy.exit("S-exit", "SHORT", stop=sSL, limit=sTP)
+    sState := 0
+
+// ── Visuel ──────────────────────────────────────────────────────────────
+if showFVG and longSignal
+    box.new(bar_index - 2, lFvgTop, bar_index, lFvgBot,
+         border_color=color.new(color.teal, 0), bgcolor=color.new(color.teal, 80))
+    label.new(bar_index, lFvgBot, "IFVG ↑", style=label.style_label_up,
+         color=color.teal, textcolor=color.white, size=size.small)
+if showFVG and shortSignal
+    box.new(bar_index - 2, sFvgTop, bar_index, sFvgBot,
+         border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 80))
+    label.new(bar_index, sFvgTop, "IFVG ↓", style=label.style_label_down,
+         color=color.red, textcolor=color.white, size=size.small)
+
+if showLevels and longSignal
+    line.new(bar_index, lTP, bar_index + 10, lTP, color=color.green, style=line.style_dashed)
+    line.new(bar_index, lSL, bar_index + 10, lSL, color=color.red, style=line.style_dotted)
+if showLevels and shortSignal
+    line.new(bar_index, sTP, bar_index + 10, sTP, color=color.green, style=line.style_dashed)
+    line.new(bar_index, sSL, bar_index + 10, sSL, color=color.red, style=line.style_dotted)
+
+// Marqueur des sweeps de liquidité (règle #1)
+plotshape(sellsideSweep, "Sweep sellside", shape.triangleup,   location.belowbar, color.new(color.blue, 40), size=size.tiny)
+plotshape(buysideSweep,  "Sweep buyside",  shape.triangledown, location.abovebar, color.new(color.orange, 40), size=size.tiny)
