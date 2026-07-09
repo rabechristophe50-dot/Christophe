@@ -60,6 +60,18 @@ namespace cAlgo.Robots
         [Parameter("Max positions simultanées", DefaultValue = 1, MinValue = 1)]
         public int MaxPositions { get; set; }
 
+        // ⚡ Quand activé, la détection devient plus agressive => beaucoup plus
+        // de trades (mais de moins bonne qualité). Surcharge PivotLen / WindowBars /
+        // RequireSingle / MinFvgAtr. Réservé au test en démo.
+        [Parameter("⚡ Mode Boost (agressif)", DefaultValue = false)]
+        public bool Boost { get; set; }
+
+        // Valeurs effectives (Boost écrase les paramètres ci-dessus)
+        private int    EffPivotLen  => Boost ? 6    : PivotLen;
+        private int    EffWindow    => Boost ? 12   : WindowBars;
+        private bool   EffRequire   => Boost ? false : RequireSingle;
+        private double EffMinFvgAtr => Boost ? 0.15 : MinFvgAtr;
+
         private const string Label = "IFVG";
         private AverageTrueRange _atr;
 
@@ -77,20 +89,20 @@ namespace cAlgo.Robots
 
         protected override void OnBar()
         {
-            int need = 2 * PivotLen + 5;
+            int need = 2 * EffPivotLen + 5;
             if (Bars.Count < need) return;
 
             int last = Bars.Count - 1;      // bougie en cours (vient d'ouvrir)
             int i = last - 1;               // dernière bougie CLÔTURÉE (= "shift 1")
             double atr = _atr.Result.Last(1);
-            double minSize = UseAtrFilter ? MinFvgAtr * atr : MinFvgPts;
+            double minSize = UseAtrFilter ? EffMinFvgAtr * atr : MinFvgPts;
 
-            // 1. Confirmation d'un pivot à (i - PivotLen) -----------------
-            int pc = i - PivotLen;
+            // 1. Confirmation d'un pivot à (i - EffPivotLen) --------------
+            int pc = i - EffPivotLen;
             double pcHigh = Bars.HighPrices[pc];
             double pcLow  = Bars.LowPrices[pc];
             bool isHigh = true, isLow = true;
-            for (int k = i - 2 * PivotLen; k <= i; k++)
+            for (int k = i - 2 * EffPivotLen; k <= i; k++)
             {
                 if (k == pc || k < 0) continue;
                 if (Bars.HighPrices[k] >= pcHigh) isHigh = false;
@@ -113,11 +125,11 @@ namespace cAlgo.Robots
 
             // ============ LONG ============
             if (sellsideSweep && AllowLongs && _lState == 0)
-            { _lState = 1; _lExpiry = i + WindowBars; _lFvgTop = 0; _lFvgBot = 0; _lSweepLow = l1; }
+            { _lState = 1; _lExpiry = i + EffWindow; _lFvgTop = 0; _lFvgBot = 0; _lSweepLow = l1; }
             if (_lState >= 1 && i > _lExpiry) _lState = 0;
             if (_lState == 1 && bearOk) { _lFvgTop = bearTop; _lFvgBot = bearBot; _lState = 2; }
             else if (_lState == 2 && bearOk)
-            { if (RequireSingle) _lState = 0; else { _lFvgTop = bearTop; _lFvgBot = bearBot; } }
+            { if (EffRequire) _lState = 0; else { _lFvgTop = bearTop; _lFvgBot = bearBot; } }
 
             bool longSignal = _lState == 2 && c1 > _lFvgTop && c1 > o1;
             if (longSignal)
@@ -133,11 +145,11 @@ namespace cAlgo.Robots
 
             // ============ SHORT ============
             if (buysideSweep && AllowShorts && _sState == 0)
-            { _sState = 1; _sExpiry = i + WindowBars; _sFvgTop = 0; _sFvgBot = 0; _sSweepHigh = h1; }
+            { _sState = 1; _sExpiry = i + EffWindow; _sFvgTop = 0; _sFvgBot = 0; _sSweepHigh = h1; }
             if (_sState >= 1 && i > _sExpiry) _sState = 0;
             if (_sState == 1 && bullOk) { _sFvgTop = bullTop; _sFvgBot = bullBot; _sState = 2; }
             else if (_sState == 2 && bullOk)
-            { if (RequireSingle) _sState = 0; else { _sFvgTop = bullTop; _sFvgBot = bullBot; } }
+            { if (EffRequire) _sState = 0; else { _sFvgTop = bullTop; _sFvgBot = bullBot; } }
 
             bool shortSignal = _sState == 2 && c1 < _sFvgBot && c1 < o1;
             if (shortSignal)
