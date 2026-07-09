@@ -17,7 +17,6 @@ input string InpFileName     = "tv_signal.json"; // fichier signal (dossier Comm
 input double InpLot          = 0.01;             // lot par position (si le signal n'en donne pas)
 input long   InpMagic        = 88112277;         // magic number
 input int    InpSlippage     = 20;               // deviation max en points
-input bool   InpAllowTrading = true;             // false = simulation (log sans ordre reel)
 input bool   InpShowDrawings = true;             // afficher les lignes/labels de RUGA sur MT5
 input string InpDrawFile     = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
 
@@ -43,8 +42,7 @@ int OnInit()
       if(cur > 0) { g_lastId = cur; PrintFormat("Baseline: signal id=%d deja present, ignore.", cur); }
      }
 
-   PrintFormat("TVBridgeEA (simple) demarre. Fichier=%s Magic=%d Trading=%s",
-               InpFileName, InpMagic, InpAllowTrading ? "REEL" : "SIMULATION");
+   PrintFormat("TVBridgeEA (simple) demarre. Fichier=%s Magic=%d [REEL]", InpFileName, InpMagic);
    return(INIT_SUCCEEDED);
   }
 
@@ -88,11 +86,6 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void Execute(string action, string symbol, double lot, double slPrice, double tpPrice)
   {
-   if(!InpAllowTrading)
-     {
-      PrintFormat("[SIMULATION] %s %s %.2f  SL=%.3f TP=%.3f", action, symbol, lot, slPrice, tpPrice);
-      return;
-     }
    if(!SymbolSelect(symbol, true))
      { PrintFormat("ERREUR: symbole %s introuvable.", symbol); return; }
 
