@@ -61,7 +61,7 @@ export class SignalDetector {
     this.confirmMs = (this.ind.confirm_seconds || 0) * 1000;
     this.lastEmitted = null; // { state, price } du dernier signal envoye
     this.pending = null;     // { state, price, reason, since } en attente de confirmation
-    this.seen = [];          // signaux DEJA connus (existants au demarrage + deja tradus)
+    this.lastDir = null;     // dernier SENS trade (LONG/SHORT) -> on trade au changement
     this.status = 'demarrage...'; // etat lisible pour le suivi en direct
   }
 
@@ -232,50 +232,44 @@ export class SignalDetector {
     const cur = { state: read.state, price: read.price ?? null, reason: read.reason || '', labelId: read.labelId ?? null };
     const dir = cur.state === STATE.LONG ? 'BUY' : cur.state === STATE.SHORT ? 'SELL' : 'FLAT';
 
-    // Au demarrage : on enregistre TOUS les signaux deja affiches (baseline) pour
-    // ne PAS les trader. On n'entrera que sur un NOUVEAU signal.
+    // Regle simple et FIABLE : on trade des que le SENS du signal actif change
+    // (BUY <-> SELL). Au demarrage on note juste le sens courant, sans trader.
     if (!this.initialized) {
       this.initialized = true;
-      await this._populateSeen();
-      this.status = `demarrage : ${this.seen.length} signaux existants ignores, en attente d'un NOUVEAU`;
+      this.lastDir = cur.state;
+      this.status = `demarrage : sens actuel ${dir} (on attend un CHANGEMENT de sens pour trader)`;
       return null;
     }
 
-    // Signal deja connu (existait au demarrage, ou deja trade) -> on ignore.
-    if (this._isKnown(cur)) {
+    // Meme sens qu'avant -> rien a faire.
+    if (cur.state === this.lastDir) {
       this.pending = null;
-      this.status = `signal actif ${dir} @${cur.price} (deja connu -> on attend un NOUVEAU signal)`;
+      this.status = `sens actuel ${dir} @${cur.price} (inchange -> on attend un flip BUY<->SELL)`;
       return null;
     }
 
-    // --- NOUVEAU signal, entree IMMEDIATE (confirm_seconds = 0) ---------------
+    // --- Le sens a CHANGE -> nouveau signal ----------------------------------
     if (this.confirmMs <= 0) {
-      this._remember(cur);
-      this.status = `>>> NOUVEAU SIGNAL ${dir} @${cur.price} -> envoye a MT5 (immediat)`;
+      this.lastDir = cur.state;
+      this.status = `>>> CHANGEMENT DE SENS -> ${dir} @${cur.price} envoye a MT5 (immediat)`;
       return await this._buildSignal(cur);
     }
 
-    // --- NOUVEAU signal, avec confirmation (le signal doit persister) ---------
-    if (this.pending && this._sameSignal(cur, this.pending)) {
+    // Avec confirmation : le nouveau sens doit persister.
+    if (this.pending && this.pending.state === cur.state) {
       const remaining = Math.ceil((this.confirmMs - (Date.now() - this.pending.since)) / 1000);
       if (remaining <= 0) {
         this.pending = null;
-        this._remember(cur);
-        this.status = `>>> NOUVEAU SIGNAL ${dir} @${cur.price} CONFIRME -> envoye a MT5`;
+        this.lastDir = cur.state;
+        this.status = `>>> ${dir} @${cur.price} CONFIRME -> envoye a MT5`;
         return await this._buildSignal(cur);
       }
-      this.status = `confirmation ${dir} @${cur.price} : ${remaining}s restantes`;
+      this.status = `flip vers ${dir} @${cur.price} : confirmation ${remaining}s`;
       return null;
     }
     this.pending = { state: cur.state, price: cur.price, reason: cur.reason, labelId: cur.labelId, since: Date.now() };
-    this.status = `nouveau signal ${dir} @${cur.price} -> attente confirmation (${Math.round(this.confirmMs / 1000)}s)`;
+    this.status = `flip vers ${dir} @${cur.price} -> attente confirmation (${Math.round(this.confirmMs / 1000)}s)`;
     return null;
-  }
-
-  /** Marque un signal comme connu/trade (borne la taille de la liste). */
-  _remember(sig) {
-    this.seen.push({ state: sig.state, price: sig.price });
-    if (this.seen.length > 300) this.seen = this.seen.slice(-300);
   }
 
   /** Construit l'objet signal (action + SL/TP) a partir d'un candidat. */
