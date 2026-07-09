@@ -30,23 +30,34 @@ const CFG = {
   drawOnChart: true, // dessine SL/TP sur le chart quand un signal sort
   logFile: "ifvg-signals.log",
 
-  // ── Exécution broker (BitGet Futures / mix) ───────────────────────────
+  // ── Exécution broker (agnostique) ─────────────────────────────────────
   broker: {
     enabled: true, // false = signaux seuls (aucun ordre)
     dryRun: true, // true = simule l'ordre (log). Passe --live pour envoyer réellement.
-    symbol: "XAUTUSDT", // symbole d'EXÉCUTION chez le broker (voir note ci-dessous)
+    type: "webhook", // "webhook" (universel, tous brokers) | "bitget"
+    symbol: "XAUUSD", // GOLD — ticker standard, accepté par la plupart des brokers Forex/CFD
+
+    // Dimensionnement (commun à tous les types)
+    riskUsd: 20, // risque $ par trade (distance entry→SL) → détermine la taille
+    maxSizeUsd: 2000, // plafond notionnel de sécurité
+    contractSize: 100, // 1 lot XAUUSD = 100 oz chez la plupart des brokers (pour info lots)
+
+    // type "webhook" — POST du signal vers l'endpoint/bridge de TON broker
+    // (EA MT4/MT5, cTrader, OANDA REST, 3Commas, Alertatron, etc.)
+    webhookUrl: "", // ex: "https://mon-bridge/mt5/order"  (vide = juste un log)
+    webhookHeaders: {}, // ex: { Authorization: "Bearer xxx" }
+
+    // type "bitget" — Futures/mix v2 (crypto ; clés dans .env)
     productType: "USDT-FUTURES",
     marginCoin: "USDT",
     marginMode: "isolated",
     leverage: 5,
-    riskUsd: 20, // risque $ par trade (distance entry→SL) → détermine la taille
-    maxSizeUsd: 200, // plafond notionnel de sécurité
   },
 };
-// NOTE symbole : le SIGNAL est calculé sur OANDA:XAUUSD (chart TradingView).
-// L'ordre est envoyé sur broker.symbol. BitGet ne liste pas le Forex XAUUSD ;
-// XAUTUSDT (Tether Gold) est le proxy or le plus proche. Mets ici le ticker
-// exact de ton broker pour l'or, ou un autre marché corrélé.
+// Le SIGNAL est calculé sur OANDA:XAUUSD (chart TradingView). L'ordre part sur
+// broker.symbol via broker.type. En "webhook", le bot POST un JSON standard que
+// ton connecteur broker traduit en ordre → fonctionne avec n'importe quel broker
+// qui accepte le GOLD (XAUUSD).
 
 // ════════════════════════════════════════════════════════════════════════
 //  DÉTECTION IFVG (pur, testable sans CDP)
@@ -263,34 +274,75 @@ function sizeFromRisk(entry, sl, b) {
   return size;
 }
 
-// Place un ordre marché avec TP/SL préréglés (ou le simule en dry-run)
+const round2 = (x) => Math.round(x * 100) / 100;
+
+// Dispatch selon le type de broker configuré
 async function placeBrokerOrder(sig, log) {
   const b = CFG.broker;
   const size = sizeFromRisk(sig.entry, sig.sl, b);
-  const round = (x) => Math.round(x * 100) / 100;
+  if (size <= 0) { log("   ⚠️  taille nulle — ordre ignoré"); return; }
+  if (b.type === "bitget") return placeBitgetOrder(sig, size, log);
+  return placeWebhookOrder(sig, size, log); // défaut universel
+}
+
+// ── Exécuteur UNIVERSEL (webhook) — marche avec tout broker via un connecteur ──
+// POST d'un ordre JSON standard ; ton bridge (MT4/MT5, cTrader, OANDA, 3Commas…)
+// le traduit en ordre réel sur le GOLD.
+async function placeWebhookOrder(sig, size, log) {
+  const b = CFG.broker;
   const order = {
-    symbol: b.symbol,
-    productType: b.productType,
-    marginMode: b.marginMode,
-    marginCoin: b.marginCoin,
-    size: size.toFixed(4),
+    symbol: b.symbol,                       // "XAUUSD"
     side: sig.side === "LONG" ? "buy" : "sell",
-    tradeSide: "open",
-    orderType: "market",
-    presetStopSurplusPrice: String(round(sig.tp)), // TP
-    presetStopLossPrice: String(round(sig.sl)),    // SL
+    type: "market",
+    size: round2(size),                     // unités (oz)
+    lots: round2(size / b.contractSize),    // lots (100 oz/lot par défaut)
+    entry: round2(sig.entry),
+    sl: round2(sig.sl),
+    tp: round2(sig.tp),
+    riskUsd: b.riskUsd,
+    timeframe: sig.tf,
+    time: new Date(sig.time).toISOString(),
+    strategy: "IFVG",
   };
 
-  if (b.dryRun) {
-    log(`   🧪 DRY-RUN ordre: ${order.side} ${order.size} ${b.symbol} @~${round(sig.entry)} TP=${order.presetStopSurplusPrice} SL=${order.presetStopLossPrice}`);
-    return;
-  }
-  if (!BK.key || !BK.secret || !BK.pass) {
-    log("   ⚠️  clés BitGet absentes dans .env — ordre non envoyé");
+  if (b.dryRun || !b.webhookUrl) {
+    const why = b.dryRun ? "DRY-RUN" : "webhookUrl vide";
+    log(`   🧪 ${why} ordre: ${order.side} ${order.lots} lot ${order.symbol} @~${order.entry} TP=${order.tp} SL=${order.sl}`);
     return;
   }
   try {
-    // (optionnel) régler le levier avant l'ordre
+    const https = (await import("https")).default;
+    const http = (await import("http")).default;
+    const u = new URL(b.webhookUrl);
+    const body = JSON.stringify(order);
+    const lib = u.protocol === "http:" ? http : https;
+    const res = await new Promise((resolve, reject) => {
+      const req = lib.request(u, { method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...b.webhookHeaders } },
+        (r) => { let d = ""; r.on("data", (c) => (d += c)); r.on("end", () => resolve({ status: r.statusCode, body: d })); });
+      req.on("error", reject); req.write(body); req.end();
+    });
+    if (res.status >= 200 && res.status < 300) log(`   ✅ ordre envoyé (webhook ${res.status}) ${order.side} ${order.lots} lot ${order.symbol}`);
+    else log(`   ❌ webhook ${res.status}: ${res.body?.slice(0, 200)}`);
+  } catch (e) {
+    log(`   ❌ erreur webhook: ${e.message}`);
+  }
+}
+
+// ── Adaptateur BitGet (crypto Futures/mix v2) ──
+async function placeBitgetOrder(sig, size, log) {
+  const b = CFG.broker;
+  const order = {
+    symbol: b.symbol, productType: b.productType, marginMode: b.marginMode, marginCoin: b.marginCoin,
+    size: size.toFixed(4), side: sig.side === "LONG" ? "buy" : "sell", tradeSide: "open", orderType: "market",
+    presetStopSurplusPrice: String(round2(sig.tp)), presetStopLossPrice: String(round2(sig.sl)),
+  };
+  if (b.dryRun) {
+    log(`   🧪 DRY-RUN ordre: ${order.side} ${order.size} ${b.symbol} @~${round2(sig.entry)} TP=${order.presetStopSurplusPrice} SL=${order.presetStopLossPrice}`);
+    return;
+  }
+  if (!BK?.key || !BK?.secret || !BK?.pass) { log("   ⚠️  clés BitGet absentes dans .env — ordre non envoyé"); return; }
+  try {
     await bitgetRequest("POST", "/api/v2/mix/account/set-leverage", {
       symbol: b.symbol, productType: b.productType, marginCoin: b.marginCoin, leverage: String(b.leverage),
     }).catch(() => {});
@@ -315,9 +367,9 @@ async function live() {
     try { appendFileSync(CFG.logFile, line + "\n"); } catch {}
   };
 
-  if (CFG.broker.enabled) await initBroker();
+  if (CFG.broker.enabled && CFG.broker.type === "bitget") await initBroker();
   const mode = !CFG.broker.enabled ? "signaux seuls" : CFG.broker.dryRun ? "broker DRY-RUN" : "broker LIVE 🔴";
-  log(`IFVG bot démarré · ${CFG.symbol} · ${CFG.timeframes.map((t) => t + "m").join(" & ")} · scan ${CFG.pollMs / 1000}s · ${mode}`);
+  log(`IFVG bot démarré · ${CFG.symbol} · ${CFG.timeframes.map((t) => t + "m").join(" & ")} · scan ${CFG.pollMs / 1000}s · ${CFG.broker.type} · ${mode}`);
 
   await chart.setSymbol({ symbol: CFG.symbol });
 
@@ -344,7 +396,7 @@ async function live() {
               await drawing.drawShape({ shape: "horizontal_line", point: { price: s.sl }, text: `IFVG SL ${tf}m` });
             } catch {}
           }
-          if (CFG.broker.enabled) await placeBrokerOrder(s, log);
+          if (CFG.broker.enabled) { s.tf = tf; await placeBrokerOrder(s, log); }
         }
       } catch (e) {
         log(`⚠️  ${tf}m: ${e.message}`);

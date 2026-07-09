@@ -51,28 +51,37 @@ node ifvg-bot.js --selftest     # teste la logique sans TradingView
 Le bot lit le chart via le CDP (port 9222), applique l'IFVG, log chaque signal
 dans la console + `ifvg-signals.log`, dessine SL/TP sur le chart, puis passe l'ordre.
 
-**Exécution broker (BitGet Futures / mix v2)** — réutilise la signature de `scalper-run.js`.
-Clés lues dans `.env` : `BITGET_API_KEY` / `BITGET_SECRET_KEY` / `BITGET_PASSPHRASE`.
-Chaque trade part en **ordre marché avec TP/SL préréglés**, taille calculée depuis le
-risque $ (`riskUsd`) et la distance entry→SL, plafonnée par `maxSizeUsd`.
+**Exécution agnostique au broker.** Symbole par défaut : **`XAUUSD`** (le GOLD standard,
+accepté par la plupart des brokers Forex/CFD). Deux modes via `CFG.broker.type` :
 
-Config `CFG.broker` en haut du fichier :
+- **`"webhook"` (défaut, universel)** — le bot POST un ordre JSON standard vers
+  `CFG.broker.webhookUrl`. Ton connecteur/bridge le traduit en ordre réel : EA
+  **MT4/MT5**, cTrader, **OANDA** REST, 3Commas, Alertatron… Marche avec *n'importe quel*
+  broker qui accepte le gold. Payload envoyé :
+  ```json
+  { "symbol":"XAUUSD", "side":"buy", "type":"market",
+    "size":6.67, "lots":0.07, "entry":2995.5, "sl":2988.5, "tp":3009.5,
+    "riskUsd":20, "timeframe":"5", "strategy":"IFVG" }
+  ```
+- **`"bitget"`** — adaptateur crypto Futures/mix v2 (clés `.env` :
+  `BITGET_API_KEY` / `BITGET_SECRET_KEY` / `BITGET_PASSPHRASE`), ordre marché + TP/SL préréglés.
+
+Dans les deux cas, la **taille** vient du risque $ (`riskUsd`) ÷ distance entry→SL,
+plafonnée par `maxSizeUsd` ; les **lots** = size ÷ `contractSize` (100 oz/lot par défaut).
+
+Config `CFG.broker` :
 
 | Champ | Rôle |
 |-------|------|
 | `enabled` | `false` = signaux seuls |
 | `dryRun` | `true` par défaut (simule) ; `--live` l'inverse |
-| `symbol` | ticker d'**exécution** chez le broker |
-| `leverage` / `marginMode` | levier & mode de marge |
-| `riskUsd` / `maxSizeUsd` | risque par trade & plafond notionnel |
+| `type` | `"webhook"` (universel) ou `"bitget"` |
+| `symbol` | ticker d'exécution (`XAUUSD` par défaut) |
+| `webhookUrl` / `webhookHeaders` | endpoint de ton broker + entêtes/auth |
+| `riskUsd` / `maxSizeUsd` / `contractSize` | dimensionnement |
 
-> ⚠️ **Symbole OR** : le signal est calculé sur `OANDA:XAUUSD` (chart), mais BitGet ne liste
-> pas le Forex XAUUSD. Le défaut `XAUTUSDT` (Tether Gold) est le proxy or le plus proche —
-> mets dans `CFG.broker.symbol` le ticker exact de ton broker. Pour un vrai broker Forex/CFD
-> (OANDA, MT5…), remplace `bitgetRequest`/`placeBrokerOrder` par l'API correspondante.
->
-> 🔴 **Sécurité** : `dryRun` est actif par défaut. Vérifie le symbole, le levier et `riskUsd`,
-> teste d'abord sur un compte démo, puis lance `--live` en connaissance de cause.
+> 🔴 **Sécurité** : `dryRun` est actif par défaut. Renseigne `webhookUrl`, vérifie
+> symbole/`riskUsd`, teste en démo, puis lance `--live`.
 
 ## Paramètres clés
 
