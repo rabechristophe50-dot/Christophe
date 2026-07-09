@@ -1,0 +1,188 @@
+//@version=6
+// ════════════════════════════════════════════════════════════════════════
+//  IFVG — INDICATEUR D'ENTRÉE  · "Comment bien trader les IFVG ?"
+//  Concept ICT Inverse Fair Value Gap · réglé OR (XAUUSD) 5m & 15m
+//
+//  Version INDICATEUR : ne passe pas d'ordres, il AFFICHE les entrées
+//  (flèches LONG/SHORT), les zones IFVG, les niveaux TP/SL, et déclenche
+//  des ALERTES TradingView (dont un message JSON pour un bridge MT5/cTrader).
+//
+//  Mêmes 4 règles que la stratégie :
+//   1. Prise de liquidité (sweep) avant l'IFVG
+//   2. 1 seul FVG -> IFVG (pas de cluster)
+//   3. Inversion confirmée par la CLÔTURE du corps
+//   4. Cible IRL -> ERL (liquidité externe = swing opposé)
+// ════════════════════════════════════════════════════════════════════════
+indicator("IFVG Entrées — XAUUSD 5/15m", overlay=true,
+     max_boxes_count=100, max_lines_count=100, max_labels_count=100)
+
+// ── Inputs ──────────────────────────────────────────────────────────────
+grpSetup   = "Setup (défauts OR 5/15m)"
+pivotLen   = input.int(8, "Longueur des swings (liquidité)", minval=2, group=grpSetup, tooltip="8 pour le 5m, 10-12 pour le 15m")
+windowBars = input.int(18, "Fenêtre max entre sweep et IFVG (bougies)", minval=3, group=grpSetup)
+requireSingleFVG = input.bool(true, "Exiger 1 seul FVG (règle #2)", group=grpSetup)
+useAtrFilter = input.bool(true, "Filtre taille FVG par ATR (auto 5m/15m)", group=grpSetup)
+minFvgAtr  = input.float(0.25, "FVG min = x × ATR(14)", minval=0.0, step=0.05, group=grpSetup)
+minFvgTicks = input.float(0.0, "Taille min du FVG (points fixes, si ATR off)", minval=0.0, group=grpSetup)
+
+grpRisk    = "Cibles"
+useSwingTP = input.bool(true, "Cible = liquidité externe / ERL (swing)", group=grpRisk)
+rrFallback = input.float(2.0, "R:R si pas de swing dispo", minval=0.5, step=0.5, group=grpRisk)
+slPad      = input.float(0.05, "Marge du stop au-delà de l'IFVG (%)", minval=0.0, step=0.05, group=grpRisk)
+
+grpDir     = "Direction"
+allowLongs  = input.bool(true, "Signaux LONG", group=grpDir)
+allowShorts = input.bool(true, "Signaux SHORT", group=grpDir)
+
+grpViz     = "Visuel"
+showFVG    = input.bool(true, "Afficher les zones IFVG", group=grpViz)
+showLevels = input.bool(true, "Afficher TP/SL", group=grpViz)
+showSweeps = input.bool(true, "Afficher les sweeps de liquidité", group=grpViz)
+
+grpAlert   = "Alertes / Webhook"
+whSymbol   = input.string("XAUUSD", "Symbole broker (message webhook)", group=grpAlert)
+riskUsd    = input.float(20.0, "Risque $ par trade (message webhook)", minval=0.0, group=grpAlert)
+
+// ── 1. Liquidité : swings + détection du sweep ──────────────────────────
+ph = ta.pivothigh(pivotLen, pivotLen)
+pl = ta.pivotlow(pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+sellsideSweep = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow
+buysideSweep  = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh
+
+// ── 2. Fair Value Gaps (3 bougies) ──────────────────────────────────────
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+bullFvgTop = low
+bullFvgBot = high[2]
+bearFvgTop = low[2]
+bearFvgBot = high
+
+atr14 = ta.atr(14)
+minFvgSize = useAtrFilter ? minFvgAtr * atr14 : minFvgTicks
+bigEnough(t, b) => minFvgSize <= 0.0 or (t - b) >= minFvgSize
+bullFVGok = bullFVG and bigEnough(bullFvgTop, bullFvgBot)
+bearFVGok = bearFVG and bigEnough(bearFvgTop, bearFvgBot)
+
+// ── Machine à états LONG ────────────────────────────────────────────────
+var int   lState  = 0
+var float lFvgTop = na
+var float lFvgBot = na
+var int   lExpiry = 0
+var float lSweepLow = na
+
+if sellsideSweep and allowLongs and lState == 0
+    lState := 1
+    lExpiry := bar_index + windowBars
+    lFvgTop := na
+    lFvgBot := na
+    lSweepLow := low
+if lState >= 1 and bar_index > lExpiry
+    lState := 0
+if lState == 1 and bearFVGok
+    lFvgTop := bearFvgTop
+    lFvgBot := bearFvgBot
+    lState  := 2
+else if lState == 2 and bearFVGok
+    if requireSingleFVG
+        lState := 0
+    else
+        lFvgTop := bearFvgTop
+        lFvgBot := bearFvgBot
+
+longSignal = lState == 2 and close > lFvgTop and close > open
+var float lEntry = na
+var float lSL = na
+var float lTP = na
+if longSignal
+    lEntry := close
+    lSL := math.min(lFvgBot, nz(lSweepLow, lFvgBot)) * (1 - slPad / 100.0)
+    risk = lEntry - lSL
+    lTP := useSwingTP and not na(lastSwingHigh) and lastSwingHigh > lEntry ? lastSwingHigh : lEntry + risk * rrFallback
+    lState := 0
+
+// ── Machine à états SHORT ───────────────────────────────────────────────
+var int   sState  = 0
+var float sFvgTop = na
+var float sFvgBot = na
+var int   sExpiry = 0
+var float sSweepHigh = na
+
+if buysideSweep and allowShorts and sState == 0
+    sState := 1
+    sExpiry := bar_index + windowBars
+    sFvgTop := na
+    sFvgBot := na
+    sSweepHigh := high
+if sState >= 1 and bar_index > sExpiry
+    sState := 0
+if sState == 1 and bullFVGok
+    sFvgTop := bullFvgTop
+    sFvgBot := bullFvgBot
+    sState  := 2
+else if sState == 2 and bullFVGok
+    if requireSingleFVG
+        sState := 0
+    else
+        sFvgTop := bullFvgTop
+        sFvgBot := bullFvgBot
+
+shortSignal = sState == 2 and close < sFvgBot and close < open
+var float sEntry = na
+var float sSL = na
+var float sTP = na
+if shortSignal
+    sEntry := close
+    sSL := math.max(sFvgTop, nz(sSweepHigh, sFvgTop)) * (1 + slPad / 100.0)
+    risk = sSL - sEntry
+    sTP := useSwingTP and not na(lastSwingLow) and lastSwingLow < sEntry ? lastSwingLow : sEntry - risk * rrFallback
+    sState := 0
+
+// ── Affichage des ENTRÉES ───────────────────────────────────────────────
+plotshape(longSignal,  "Entrée LONG",  shape.labelup,   location.belowbar, color.teal, text="ENTRY ↑", textcolor=color.white, size=size.small)
+plotshape(shortSignal, "Entrée SHORT", shape.labeldown, location.abovebar, color.red,  text="ENTRY ↓", textcolor=color.white, size=size.small)
+
+if showFVG and longSignal
+    box.new(bar_index - 2, lFvgTop, bar_index, lFvgBot, border_color=color.new(color.teal, 0), bgcolor=color.new(color.teal, 80))
+if showFVG and shortSignal
+    box.new(bar_index - 2, sFvgTop, bar_index, sFvgBot, border_color=color.new(color.red, 0), bgcolor=color.new(color.red, 80))
+
+if showLevels and longSignal
+    line.new(bar_index, lTP, bar_index + 12, lTP, color=color.green, style=line.style_dashed)
+    line.new(bar_index, lSL, bar_index + 12, lSL, color=color.red, style=line.style_dotted)
+    label.new(bar_index + 12, lTP, "TP " + str.tostring(lTP, format.mintick), style=label.style_label_left, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+    label.new(bar_index + 12, lSL, "SL " + str.tostring(lSL, format.mintick), style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+if showLevels and shortSignal
+    line.new(bar_index, sTP, bar_index + 12, sTP, color=color.green, style=line.style_dashed)
+    line.new(bar_index, sSL, bar_index + 12, sSL, color=color.red, style=line.style_dotted)
+    label.new(bar_index + 12, sTP, "TP " + str.tostring(sTP, format.mintick), style=label.style_label_left, color=color.new(color.green, 20), textcolor=color.white, size=size.small)
+    label.new(bar_index + 12, sSL, "SL " + str.tostring(sSL, format.mintick), style=label.style_label_left, color=color.new(color.red, 20), textcolor=color.white, size=size.small)
+
+plotshape(showSweeps and sellsideSweep, "Sweep sellside", shape.triangleup,   location.belowbar, color.new(color.blue, 40), size=size.tiny)
+plotshape(showSweeps and buysideSweep,  "Sweep buyside",  shape.triangledown, location.abovebar, color.new(color.orange, 40), size=size.tiny)
+
+// ── ALERTES ─────────────────────────────────────────────────────────────
+// 1) Alertes simples (message fixe) — condition "IFVG LONG/SHORT"
+alertcondition(longSignal,  "IFVG LONG",  "IFVG : entrée LONG (achat) confirmée")
+alertcondition(shortSignal, "IFVG SHORT", "IFVG : entrée SHORT (vente) confirmée")
+
+// 2) Alerte dynamique JSON (pour bridge MT5 / cTrader / webhook du bot)
+//    Créer une alerte sur "Any alert() function call".
+jsonMsg(side, entry, sl, tp) =>
+    '{"symbol":"' + whSymbol + '","side":"' + side + '","type":"market"' +
+     ',"entry":' + str.tostring(entry, format.mintick) +
+     ',"sl":' + str.tostring(sl, format.mintick) +
+     ',"tp":' + str.tostring(tp, format.mintick) +
+     ',"riskUsd":' + str.tostring(riskUsd) +
+     ',"timeframe":"' + timeframe.period + '","strategy":"IFVG"}'
+if longSignal
+    alert(jsonMsg("buy", lEntry, lSL, lTP), alert.freq_once_per_bar_close)
+if shortSignal
+    alert(jsonMsg("sell", sEntry, sSL, sTP), alert.freq_once_per_bar_close)

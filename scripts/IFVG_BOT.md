@@ -6,7 +6,8 @@ strictement identique, réglés pour l'**OR (XAUUSD) en 5 min et 15 min** :
 | Livrable | Fichier | Rôle |
 |----------|---------|------|
 | **Stratégie** (backtest) | [`ifvg_bot.pine`](./ifvg_bot.pine) | Pine Script v6 : backtest, entrées/SL/TP auto, Strategy Tester |
-| **Bot live** (signaux) | [`../ifvg-bot.js`](../ifvg-bot.js) | Lit le chart TradingView live (CDP) et émet les signaux XAUUSD 5m/15m |
+| **Indicateur d'entrée** | [`ifvg_indicator.pine`](./ifvg_indicator.pine) | Affiche les entrées (flèches), zones IFVG, TP/SL + **alertes** (dont JSON webhook) |
+| **Bot live** (exécution) | [`../ifvg-bot.js`](../ifvg-bot.js) | Lit le chart TradingView live (CDP), émet les signaux et passe les ordres |
 
 > Réglage OR 5/15m : la taille minimale de FVG est filtrée par **ATR(14)** (`0.25 × ATR`),
 > donc le setup s'auto-adapte entre le 5 min et le 15 min sans retoucher de valeur en points.
@@ -40,6 +41,26 @@ strictement identique, réglés pour l'**OR (XAUUSD) en 5 min et 15 min** :
    node scripts/pine_push.js
    ```
 3. Ouvre le **Strategy Tester** pour le backtest, ajuste les inputs.
+
+### A-bis. L'indicateur d'entrée (TradingView)
+Charge [`ifvg_indicator.pine`](./ifvg_indicator.pine) sur ton chart XAUUSD 5m/15m.
+Il **n'ouvre pas d'ordres** — il affiche `ENTRY ↑ / ↓`, la zone IFVG, les niveaux TP/SL,
+et fournit **3 alertes** :
+
+| Alerte | Condition | Usage |
+|--------|-----------|-------|
+| `IFVG LONG` | entrée achat confirmée | notif simple |
+| `IFVG SHORT` | entrée vente confirmée | notif simple |
+| *Any alert() function call* | message **JSON** dynamique | webhook → bridge MT5/cTrader |
+
+Le message JSON est identique au payload du bot (`symbol`, `side`, `entry`, `sl`, `tp`…),
+donc l'alerte de l'indicateur peut piloter directement ton exécution.
+
+**MT5 / cTrader** : TradingView ne se connecte pas nativement à MT5/cTrader → il faut un
+*bridge* qui reçoit le webhook. Deux options : (1) un EA MT5 / cBot cTrader qui écoute un
+webhook local, ou (2) faire tourner `ifvg-bot.js` (mode `webhook`) qui relaie vers ce bridge.
+Le concept peut aussi être réécrit en **MQL5** (MT5) ou **C#/cAlgo** (cTrader) pour tourner
+100% nativement sur la plateforme, sans TradingView.
 
 ### B. Le bot live (signaux + exécution broker)
 ```bash
