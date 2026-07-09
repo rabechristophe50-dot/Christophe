@@ -1,7 +1,15 @@
 # IFVG Bot — « Comment bien trader les IFVG ? »
 
-Stratégie Pine Script (v6) qui automatise le concept ICT d'**Inverse Fair Value Gap**.
-Fichier : [`ifvg_bot.pine`](./ifvg_bot.pine)
+Concept ICT **Inverse Fair Value Gap**, livré en **deux morceaux** avec une logique
+strictement identique, réglés pour l'**OR (XAUUSD) en 5 min et 15 min** :
+
+| Livrable | Fichier | Rôle |
+|----------|---------|------|
+| **Stratégie** (backtest) | [`ifvg_bot.pine`](./ifvg_bot.pine) | Pine Script v6 : backtest, entrées/SL/TP auto, Strategy Tester |
+| **Bot live** (signaux) | [`../ifvg-bot.js`](../ifvg-bot.js) | Lit le chart TradingView live (CDP) et émet les signaux XAUUSD 5m/15m |
+
+> Réglage OR 5/15m : la taille minimale de FVG est filtrée par **ATR(14)** (`0.25 × ATR`),
+> donc le setup s'auto-adapte entre le 5 min et le 15 min sans retoucher de valeur en points.
 
 ## Les 4 règles du concept (et où elles vivent dans le code)
 
@@ -24,13 +32,26 @@ Fichier : [`ifvg_bot.pine`](./ifvg_bot.pine)
 
 ## Utilisation
 
-1. Lance TradingView Desktop en mode debug (voir `SETUP_GUIDE.md`).
+### A. La stratégie (backtest sur TradingView)
+1. Lance TradingView Desktop en mode debug (voir `SETUP_GUIDE.md`), chart sur **OANDA:XAUUSD** en 5m ou 15m.
 2. Pousse et compile le script :
    ```bash
    cp scripts/ifvg_bot.pine scripts/current.pine
    node scripts/pine_push.js
    ```
-3. Ouvre le **Strategy Tester** pour le backtest, ajuste les inputs (longueur des swings, fenêtre, R:R).
+3. Ouvre le **Strategy Tester** pour le backtest, ajuste les inputs.
+
+### B. Le bot live (signaux)
+```bash
+node ifvg-bot.js            # scanne XAUUSD 5m & 15m, log les signaux (entry/SL/TP)
+node ifvg-bot.js --selftest # teste la logique sans TradingView
+```
+Le bot lit le chart via le CDP (port 9222), applique l'IFVG et écrit chaque signal
+dans la console + `ifvg-signals.log`, et dessine SL/TP sur le chart.
+Config en haut du fichier (`CFG`) : symbole, timeframes, ATR, R:R, fréquence de scan.
+
+> ⚠️ Le bot **émet des signaux** (il ne passe pas d'ordres réels : pas de broker OR configuré).
+> L'exécution peut être branchée dans `scan()` sur l'API de ton broker.
 
 ## Paramètres clés
 

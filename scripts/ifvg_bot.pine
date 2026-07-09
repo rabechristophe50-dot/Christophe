@@ -9,23 +9,27 @@
 //   3. CLÔTURE CORPS EN DESSOUS/AU-DESSUS → inversion confirmée par la clôture
 //   4. TARGET CLAIRE = IRL TO ERL        → cible = liquidité externe opposée
 // ════════════════════════════════════════════════════════════════════════
-strategy("IFVG Bot — IRL to ERL", overlay=true, initial_capital=10000,
+// Réglé pour l'OR (XAUUSD) en 5 min et 15 min. Filtre de taille de FVG basé
+// sur l'ATR → s'auto-adapte entre les deux timeframes.
+strategy("IFVG Bot — IRL to ERL (XAUUSD 5/15m)", overlay=true, initial_capital=10000,
      default_qty_type=strategy.percent_of_equity, default_qty_value=10,
      commission_type=strategy.commission.percent, commission_value=0.02,
      slippage=1, calc_on_every_tick=false, max_boxes_count=100,
      max_lines_count=100, max_labels_count=100)
 
 // ── Inputs ──────────────────────────────────────────────────────────────
-grpSetup   = "Setup"
-pivotLen   = input.int(10, "Longueur des swings (liquidité)", minval=2, group=grpSetup)
-windowBars = input.int(15, "Fenêtre max entre sweep et IFVG (bougies)", minval=3, group=grpSetup)
+grpSetup   = "Setup (défauts OR 5/15m)"
+pivotLen   = input.int(8, "Longueur des swings (liquidité)", minval=2, group=grpSetup, tooltip="8 pour le 5m, 10-12 pour le 15m")
+windowBars = input.int(18, "Fenêtre max entre sweep et IFVG (bougies)", minval=3, group=grpSetup)
 requireSingleFVG = input.bool(true, "Exiger 1 seul FVG (règle #2)", group=grpSetup)
-minFvgTicks = input.float(0.0, "Taille min du FVG (points, 0 = off)", minval=0.0, group=grpSetup)
+useAtrFilter = input.bool(true, "Filtre taille FVG par ATR (auto 5m/15m)", group=grpSetup)
+minFvgAtr  = input.float(0.25, "FVG min = x × ATR(14)", minval=0.0, step=0.05, group=grpSetup, tooltip="0.25 = le FVG doit valoir ≥ 25% d'un ATR. Filtre le bruit sur l'or.")
+minFvgTicks = input.float(0.0, "Taille min du FVG (points fixes, si ATR off)", minval=0.0, group=grpSetup)
 
 grpRisk    = "Risque & Cibles"
 useSwingTP = input.bool(true, "Cible = liquidité externe / ERL (swing)", group=grpRisk)
 rrFallback = input.float(2.0, "R:R si pas de swing dispo", minval=0.5, step=0.5, group=grpRisk)
-slPad      = input.float(0.1, "Marge du stop au-delà de l'IFVG (%)", minval=0.0, step=0.05, group=grpRisk)
+slPad      = input.float(0.05, "Marge du stop au-delà de l'IFVG (%)", minval=0.0, step=0.05, group=grpRisk, tooltip="0.05% ≈ 1.5$ sur un or à 3000")
 
 grpDir     = "Direction"
 allowLongs  = input.bool(true, "Autoriser les LONGs", group=grpDir)
@@ -61,7 +65,9 @@ bullFvgBot = high[2]
 bearFvgTop = low[2]
 bearFvgBot = high
 
-bigEnough(t, b) => minFvgTicks <= 0.0 or (t - b) >= minFvgTicks
+atr14 = ta.atr(14)
+minFvgSize = useAtrFilter ? minFvgAtr * atr14 : minFvgTicks
+bigEnough(t, b) => minFvgSize <= 0.0 or (t - b) >= minFvgSize
 bullFVGok = bullFVG and bigEnough(bullFvgTop, bullFvgBot)
 bearFVGok = bearFVG and bigEnough(bearFvgTop, bearFvgBot)
 
@@ -76,7 +82,10 @@ var int   lFvgCnt  = 0
 var int   lExpiry  = 0
 var float lSweepLow = na
 
-if sellsideSweep and allowLongs
+// On ne (re)démarre le tracking que depuis l'état idle : une bougie qui
+// re-balaie le même plus-bas (ex. la bougie d'inversion) ne doit pas
+// réinitialiser le setup en cours.
+if sellsideSweep and allowLongs and lState == 0
     lState  := 1
     lExpiry := bar_index + windowBars
     lFvgCnt := 0
@@ -128,7 +137,7 @@ var int   sFvgCnt  = 0
 var int   sExpiry  = 0
 var float sSweepHigh = na
 
-if buysideSweep and allowShorts
+if buysideSweep and allowShorts and sState == 0
     sState  := 1
     sExpiry := bar_index + windowBars
     sFvgCnt := 0
