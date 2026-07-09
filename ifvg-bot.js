@@ -29,7 +29,24 @@ const CFG = {
   slPadPct: 0.05, // marge du stop au-delà de l'IFVG (%)
   drawOnChart: true, // dessine SL/TP sur le chart quand un signal sort
   logFile: "ifvg-signals.log",
+
+  // ── Exécution broker (BitGet Futures / mix) ───────────────────────────
+  broker: {
+    enabled: true, // false = signaux seuls (aucun ordre)
+    dryRun: true, // true = simule l'ordre (log). Passe --live pour envoyer réellement.
+    symbol: "XAUTUSDT", // symbole d'EXÉCUTION chez le broker (voir note ci-dessous)
+    productType: "USDT-FUTURES",
+    marginCoin: "USDT",
+    marginMode: "isolated",
+    leverage: 5,
+    riskUsd: 20, // risque $ par trade (distance entry→SL) → détermine la taille
+    maxSizeUsd: 200, // plafond notionnel de sécurité
+  },
 };
+// NOTE symbole : le SIGNAL est calculé sur OANDA:XAUUSD (chart TradingView).
+// L'ordre est envoyé sur broker.symbol. BitGet ne liste pas le Forex XAUUSD ;
+// XAUTUSDT (Tether Gold) est le proxy or le plus proche. Mets ici le ticker
+// exact de ton broker pour l'or, ou un autre marché corrélé.
 
 // ════════════════════════════════════════════════════════════════════════
 //  DÉTECTION IFVG (pur, testable sans CDP)
@@ -192,6 +209,100 @@ function selftest() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+//  BROKER — exécution réelle sur BitGet (Futures / mix v2)
+//  Signature identique à scalper-run.js. Clés lues dans .env :
+//    BITGET_API_KEY / BITGET_SECRET_KEY / BITGET_PASSPHRASE
+// ════════════════════════════════════════════════════════════════════════
+let BK = null; // { key, secret, pass } — chargé à la demande
+
+async function initBroker() {
+  if (BK) return BK;
+  const { readFileSync, existsSync } = await import("fs");
+  const envUrl = new URL(".env", import.meta.url);
+  if (existsSync(envUrl)) {
+    readFileSync(envUrl, "utf8").split("\n").forEach((line) => {
+      const [k, ...v] = line.split("=");
+      if (k && !k.startsWith("#") && v.length) process.env[k.trim()] = v.join("=").trim();
+    });
+  }
+  BK = {
+    key: process.env.BITGET_API_KEY,
+    secret: process.env.BITGET_SECRET_KEY,
+    pass: process.env.BITGET_PASSPHRASE,
+  };
+  return BK;
+}
+
+async function bitgetRequest(method, path, body = null) {
+  const { createHmac } = await import("crypto");
+  const https = (await import("https")).default;
+  const { key, secret, pass } = BK;
+  const ts = Date.now().toString();
+  const bodyStr = body ? JSON.stringify(body) : "";
+  const sig = createHmac("sha256", secret).update(ts + method + path + bodyStr).digest("base64");
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname: "api.bitget.com", path, method,
+        headers: { "Content-Type": "application/json", "ACCESS-KEY": key,
+          "ACCESS-SIGN": sig, "ACCESS-TIMESTAMP": ts, "ACCESS-PASSPHRASE": pass, locale: "en-US" } },
+      (res) => { let d = ""; res.on("data", (c) => (d += c)); res.on("end", () => { try { resolve(JSON.parse(d)); } catch { resolve({ code: "parse_error", raw: d }); } }); },
+    );
+    req.on("error", reject);
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
+// Taille (en contrats/coin) déduite du risque $ et de la distance entry→SL
+function sizeFromRisk(entry, sl, b) {
+  const perUnitRisk = Math.abs(entry - sl);
+  if (perUnitRisk <= 0) return 0;
+  let size = b.riskUsd / perUnitRisk; // unités de sous-jacent
+  const notional = size * entry;
+  if (notional > b.maxSizeUsd) size = b.maxSizeUsd / entry; // plafond de sécurité
+  return size;
+}
+
+// Place un ordre marché avec TP/SL préréglés (ou le simule en dry-run)
+async function placeBrokerOrder(sig, log) {
+  const b = CFG.broker;
+  const size = sizeFromRisk(sig.entry, sig.sl, b);
+  const round = (x) => Math.round(x * 100) / 100;
+  const order = {
+    symbol: b.symbol,
+    productType: b.productType,
+    marginMode: b.marginMode,
+    marginCoin: b.marginCoin,
+    size: size.toFixed(4),
+    side: sig.side === "LONG" ? "buy" : "sell",
+    tradeSide: "open",
+    orderType: "market",
+    presetStopSurplusPrice: String(round(sig.tp)), // TP
+    presetStopLossPrice: String(round(sig.sl)),    // SL
+  };
+
+  if (b.dryRun) {
+    log(`   🧪 DRY-RUN ordre: ${order.side} ${order.size} ${b.symbol} @~${round(sig.entry)} TP=${order.presetStopSurplusPrice} SL=${order.presetStopLossPrice}`);
+    return;
+  }
+  if (!BK.key || !BK.secret || !BK.pass) {
+    log("   ⚠️  clés BitGet absentes dans .env — ordre non envoyé");
+    return;
+  }
+  try {
+    // (optionnel) régler le levier avant l'ordre
+    await bitgetRequest("POST", "/api/v2/mix/account/set-leverage", {
+      symbol: b.symbol, productType: b.productType, marginCoin: b.marginCoin, leverage: String(b.leverage),
+    }).catch(() => {});
+    const res = await bitgetRequest("POST", "/api/v2/mix/order/place-order", order);
+    if (res.code === "00000") log(`   ✅ ordre envoyé (id ${res.data?.orderId}) ${order.side} ${order.size} ${b.symbol}`);
+    else log(`   ❌ rejet broker: ${res.code} ${res.msg || ""}`);
+  } catch (e) {
+    log(`   ❌ erreur broker: ${e.message}`);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
 //  LIVE — connexion TradingView via le core CDP du repo
 // ════════════════════════════════════════════════════════════════════════
 async function live() {
@@ -204,7 +315,9 @@ async function live() {
     try { appendFileSync(CFG.logFile, line + "\n"); } catch {}
   };
 
-  log(`IFVG bot démarré · ${CFG.symbol} · ${CFG.timeframes.map((t) => t + "m").join(" & ")} · scan ${CFG.pollMs / 1000}s`);
+  if (CFG.broker.enabled) await initBroker();
+  const mode = !CFG.broker.enabled ? "signaux seuls" : CFG.broker.dryRun ? "broker DRY-RUN" : "broker LIVE 🔴";
+  log(`IFVG bot démarré · ${CFG.symbol} · ${CFG.timeframes.map((t) => t + "m").join(" & ")} · scan ${CFG.pollMs / 1000}s · ${mode}`);
 
   await chart.setSymbol({ symbol: CFG.symbol });
 
@@ -231,6 +344,7 @@ async function live() {
               await drawing.drawShape({ shape: "horizontal_line", point: { price: s.sl }, text: `IFVG SL ${tf}m` });
             } catch {}
           }
+          if (CFG.broker.enabled) await placeBrokerOrder(s, log);
         }
       } catch (e) {
         log(`⚠️  ${tf}m: ${e.message}`);
@@ -245,6 +359,8 @@ async function live() {
 // ── Entrée ──────────────────────────────────────────────────────────────
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
+  if (process.argv.includes("--live")) CFG.broker.dryRun = false; // envoie de vrais ordres
+  if (process.argv.includes("--signals-only")) CFG.broker.enabled = false;
   if (process.argv.includes("--selftest")) selftest();
   else live().catch((e) => { console.error("Fatal:", e.message); process.exit(1); });
 }

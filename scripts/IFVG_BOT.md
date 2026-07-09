@@ -41,17 +41,38 @@ strictement identique, réglés pour l'**OR (XAUUSD) en 5 min et 15 min** :
    ```
 3. Ouvre le **Strategy Tester** pour le backtest, ajuste les inputs.
 
-### B. Le bot live (signaux)
+### B. Le bot live (signaux + exécution broker)
 ```bash
-node ifvg-bot.js            # scanne XAUUSD 5m & 15m, log les signaux (entry/SL/TP)
-node ifvg-bot.js --selftest # teste la logique sans TradingView
+node ifvg-bot.js                # scanne XAUUSD 5m & 15m — ordres en DRY-RUN (simulés)
+node ifvg-bot.js --live         # 🔴 envoie de VRAIS ordres sur le broker
+node ifvg-bot.js --signals-only # signaux seuls, aucune interaction broker
+node ifvg-bot.js --selftest     # teste la logique sans TradingView
 ```
-Le bot lit le chart via le CDP (port 9222), applique l'IFVG et écrit chaque signal
-dans la console + `ifvg-signals.log`, et dessine SL/TP sur le chart.
-Config en haut du fichier (`CFG`) : symbole, timeframes, ATR, R:R, fréquence de scan.
+Le bot lit le chart via le CDP (port 9222), applique l'IFVG, log chaque signal
+dans la console + `ifvg-signals.log`, dessine SL/TP sur le chart, puis passe l'ordre.
 
-> ⚠️ Le bot **émet des signaux** (il ne passe pas d'ordres réels : pas de broker OR configuré).
-> L'exécution peut être branchée dans `scan()` sur l'API de ton broker.
+**Exécution broker (BitGet Futures / mix v2)** — réutilise la signature de `scalper-run.js`.
+Clés lues dans `.env` : `BITGET_API_KEY` / `BITGET_SECRET_KEY` / `BITGET_PASSPHRASE`.
+Chaque trade part en **ordre marché avec TP/SL préréglés**, taille calculée depuis le
+risque $ (`riskUsd`) et la distance entry→SL, plafonnée par `maxSizeUsd`.
+
+Config `CFG.broker` en haut du fichier :
+
+| Champ | Rôle |
+|-------|------|
+| `enabled` | `false` = signaux seuls |
+| `dryRun` | `true` par défaut (simule) ; `--live` l'inverse |
+| `symbol` | ticker d'**exécution** chez le broker |
+| `leverage` / `marginMode` | levier & mode de marge |
+| `riskUsd` / `maxSizeUsd` | risque par trade & plafond notionnel |
+
+> ⚠️ **Symbole OR** : le signal est calculé sur `OANDA:XAUUSD` (chart), mais BitGet ne liste
+> pas le Forex XAUUSD. Le défaut `XAUTUSDT` (Tether Gold) est le proxy or le plus proche —
+> mets dans `CFG.broker.symbol` le ticker exact de ton broker. Pour un vrai broker Forex/CFD
+> (OANDA, MT5…), remplace `bitgetRequest`/`placeBrokerOrder` par l'API correspondante.
+>
+> 🔴 **Sécurité** : `dryRun` est actif par défaut. Vérifie le symbole, le levier et `riskUsd`,
+> teste d'abord sur un compte démo, puis lance `--live` en connaissance de cause.
 
 ## Paramètres clés
 
