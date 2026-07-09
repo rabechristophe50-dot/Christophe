@@ -182,7 +182,13 @@ async function main() {
       }
     } catch (e) {
       consecutiveErrors++;
-      if (consecutiveErrors <= 3 || consecutiveErrors % 20 === 0) {
+      const cdp = /CDP|connection failed|fetch failed|No TradingView/i.test(e.message || '');
+      if (cdp) {
+        // Message clair et non alarmant : TradingView pas (encore) connecte.
+        if (consecutiveErrors === 1 || consecutiveErrors % 10 === 0) {
+          console.log('[bridge] En attente de TradingView (lance-le en mode debogage : demarrer.bat)...');
+        }
+      } else if (consecutiveErrors <= 3 || consecutiveErrors % 20 === 0) {
         console.warn(`[bridge] Erreur de lecture (${consecutiveErrors}): ${e.message}`);
       }
     }
