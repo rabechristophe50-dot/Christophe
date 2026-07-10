@@ -6,7 +6,7 @@
  * un etat cible : LONG / SHORT / FLAT, puis on emet un signal uniquement quand
  * l'etat CHANGE (anti-doublon).
  */
-import { data as coreData } from '../core/index.js';
+import { data as coreData, alerts as coreAlerts } from '../core/index.js';
 
 const STATE = { LONG: 'LONG', SHORT: 'SHORT', FLAT: 'FLAT' };
 
@@ -46,6 +46,8 @@ export class SignalDetector {
   constructor(cfg, deps = {}) {
     this.cfg = cfg;
     this.data = deps.data || coreData; // injectable pour les tests
+    this.alerts = deps.alerts || coreAlerts;
+    this.fireTimes = {};     // (mode alert) alert_id -> derniere heure de declenchement
     this.ind = cfg.indicator;
     this.lastState = STATE.FLAT;
     this.lastLabelId = null;
@@ -246,6 +248,7 @@ export class SignalDetector {
   }
 
   async poll() {
+    if ((this.ind.mode || 'label') === 'alert') return this._pollAlerts();
     if ((this.ind.mode || 'label') === 'study_value') return this._pollStudyValue();
 
     const entries = await this.readAllEntries();
@@ -293,6 +296,58 @@ export class SignalDetector {
     this.lastKey = key;
     this.status = `>>> NOUVEAU SIGNAL ${dir} @${pick.price} (id ${pick.id}) -> envoye a MT5`;
     return await this._buildSignal(pick);
+  }
+
+  /**
+   * Mode ALERTE (le plus fiable) : on surveille les alertes RUGA et on trade
+   * quand une alerte se DECLENCHE (last_fire_time change). Le sens vient du
+   * message de l'alerte (contient "buy" ou "sell").
+   */
+  async _pollAlerts() {
+    let list;
+    try { list = (await this.alerts.list())?.alerts || []; }
+    catch (e) { this.status = 'lecture des alertes impossible (TV connecte ?)'; return null; }
+
+    const fireNum = (v) => {
+      if (v == null) return 0;
+      if (typeof v === 'number') return v;
+      const n = Date.parse(v);
+      return Number.isNaN(n) ? Number(v) || 0 : n;
+    };
+    const dirOf = (a) => {
+      const txt = `${a.message || ''} ${a.condition || ''}`;
+      if (matchesAny(txt, this.ind.buy_keywords)) return STATE.LONG;
+      if (matchesAny(txt, this.ind.sell_keywords)) return STATE.SHORT;
+      return null;
+    };
+
+    // Alertes pertinentes = celles dont le message/condition indique buy ou sell.
+    const relevant = list.filter((a) => a.active !== false && dirOf(a) !== null);
+
+    if (!this.initialized) {
+      this.initialized = true;
+      for (const a of relevant) this.fireTimes[a.alert_id] = fireNum(a.last_fired);
+      this.status = `demarrage : ${relevant.length} alertes RUGA surveillees, en attente d'un declenchement`;
+      return null;
+    }
+
+    // Chercher une alerte qui vient de se declencher (heure de fire plus recente).
+    let fired = null;
+    for (const a of relevant) {
+      const prev = this.fireTimes[a.alert_id] ?? 0;
+      const now = fireNum(a.last_fired);
+      if (now > prev) { this.fireTimes[a.alert_id] = now; fired = a; }
+    }
+
+    if (!fired) { this.status = `${relevant.length} alertes surveillees (aucun declenchement)`; return null; }
+
+    const state = dirOf(fired);
+    const dir = state === STATE.LONG ? 'BUY' : 'SELL';
+    // Prix d'entree = prix marche courant au moment du declenchement.
+    let price = null;
+    try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; }
+    this.status = `>>> ALERTE ${dir} declenchee -> envoye a MT5`;
+    return await this._buildSignal({ state, price, reason: (fired.message || fired.condition || 'alerte') });
   }
 
   /** Mode study_value : on trade au changement de sens. */
