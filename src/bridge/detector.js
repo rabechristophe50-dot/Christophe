@@ -314,15 +314,13 @@ export class SignalDetector {
       const n = Date.parse(v);
       return Number.isNaN(n) ? Number(v) || 0 : n;
     };
-    const dirOf = (a) => {
+    // Une alerte "de signal" = son texte parle de buy/sell/signal ou de RUGA.
+    const kws = [...(this.ind.buy_keywords || []), ...(this.ind.sell_keywords || []), 'signal', 'alert', this.ind.study_filter || ''].filter(Boolean);
+    const isSignalAlert = (a) => {
       const txt = `${a.message || ''} ${a.condition || ''}`;
-      if (matchesAny(txt, this.ind.buy_keywords)) return STATE.LONG;
-      if (matchesAny(txt, this.ind.sell_keywords)) return STATE.SHORT;
-      return null;
+      return kws.some((k) => matchesAny(txt, [k]));
     };
-
-    // Alertes pertinentes = celles dont le message/condition indique buy ou sell.
-    const relevant = list.filter((a) => a.active !== false && dirOf(a) !== null);
+    const relevant = list.filter((a) => a.active !== false && isSignalAlert(a));
 
     if (!this.initialized) {
       this.initialized = true;
@@ -341,13 +339,39 @@ export class SignalDetector {
 
     if (!fired) { this.status = `${relevant.length} alertes surveillees (aucun declenchement)`; return null; }
 
-    const state = dirOf(fired);
+    // L'alerte "Any Buy or Sell" ne dit pas le sens -> on lit le sens sur le
+    // GRAPHIQUE (la fleche que RUGA vient de dessiner, la plus proche du prix).
+    const chart = await this._nearestChartSignal();
+    let state = chart?.state ?? null;
+    let price = chart?.price ?? null;
+    let reason = chart?.reason || fired.message || fired.condition || 'alerte';
+    if (state == null) {
+      // secours : sens depuis le message si le graphique n'a rien donne.
+      const txt = `${fired.message || ''} ${fired.condition || ''}`;
+      if (matchesAny(txt, this.ind.buy_keywords)) state = STATE.LONG;
+      else if (matchesAny(txt, this.ind.sell_keywords)) state = STATE.SHORT;
+      try { if (price == null) price = (await this.data.getQuote({}))?.price ?? null; } catch { /* */ }
+    }
+    if (state == null) { this.status = 'alerte declenchee mais sens indetermine (graphique + message)'; return null; }
+
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
-    // Prix d'entree = prix marche courant au moment du declenchement.
-    let price = null;
-    try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; }
-    this.status = `>>> ALERTE ${dir} declenchee -> envoye a MT5`;
-    return await this._buildSignal({ state, price, reason: (fired.message || fired.condition || 'alerte') });
+    this.status = `>>> ALERTE declenchee : ${dir} @${price} -> envoye a MT5`;
+    return await this._buildSignal({ state, price, reason });
+  }
+
+  /** Sens + prix du signal RUGA actif = la fleche la plus proche du prix. */
+  async _nearestChartSignal() {
+    let entries = [];
+    try { entries = await this.readAllEntries(); } catch { return null; }
+    if (!entries.length) return null;
+    let curPrice = null;
+    try { curPrice = (await this.data.getQuote({}))?.price ?? null; } catch { curPrice = null; }
+    let best = null;
+    for (const e of entries) {
+      const dist = (curPrice != null && e.price != null) ? Math.abs(e.price - curPrice) : Infinity;
+      if (best === null || dist < best.dist) best = { dist, state: e.state, price: e.price, reason: e.reason };
+    }
+    return best ? { state: best.state, price: best.price, reason: best.reason } : null;
   }
 
   /** Mode study_value : on trade au changement de sens. */
