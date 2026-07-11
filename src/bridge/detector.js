@@ -339,23 +339,29 @@ export class SignalDetector {
 
     if (!fired) { this.status = `${relevant.length} alertes surveillees (aucun declenchement)`; return null; }
 
-    // L'alerte "Any Buy or Sell" ne dit pas le sens -> on lit le sens sur le
-    // GRAPHIQUE (la fleche que RUGA vient de dessiner, la plus proche du prix).
-    const chart = await this._nearestChartSignal();
-    let state = chart?.state ?? null;
-    let price = chart?.price ?? null;
-    let reason = chart?.reason || fired.message || fired.condition || 'alerte';
+    // 1) Sens depuis l'ALERTE (fiable si alertes BUY / SELL separees).
+    const txt = `${fired.message || ''} ${fired.condition || ''}`;
+    const hasBuy = matchesAny(txt, this.ind.buy_keywords);
+    const hasSell = matchesAny(txt, this.ind.sell_keywords);
+    let state = null;
+    if (hasBuy && !hasSell) state = STATE.LONG;
+    else if (hasSell && !hasBuy) state = STATE.SHORT;
+
+    // 2) Si l'alerte est combinee (buy ET sell, ou ni l'un ni l'autre),
+    //    on lit le sens sur le graphique (la fleche la plus proche du prix).
+    let price = null;
+    let reason = fired.message || fired.condition || 'alerte';
     if (state == null) {
-      // secours : sens depuis le message si le graphique n'a rien donne.
-      const txt = `${fired.message || ''} ${fired.condition || ''}`;
-      if (matchesAny(txt, this.ind.buy_keywords)) state = STATE.LONG;
-      else if (matchesAny(txt, this.ind.sell_keywords)) state = STATE.SHORT;
-      try { if (price == null) price = (await this.data.getQuote({}))?.price ?? null; } catch { /* */ }
+      const chart = await this._nearestChartSignal();
+      state = chart?.state ?? null;
+      price = chart?.price ?? null;
+      if (chart?.reason) reason = chart.reason;
     }
-    if (state == null) { this.status = 'alerte declenchee mais sens indetermine (graphique + message)'; return null; }
+    if (price == null) { try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; } }
+    if (state == null) { this.status = 'alerte declenchee mais sens indetermine'; return null; }
 
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
-    this.status = `>>> ALERTE declenchee : ${dir} @${price} -> envoye a MT5`;
+    this.status = `>>> ALERTE ${dir} declenchee -> envoye a MT5`;
     return await this._buildSignal({ state, price, reason });
   }
 
