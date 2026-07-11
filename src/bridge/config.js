@@ -35,6 +35,7 @@ const DEFAULTS = {
   guard: { enabled: true, symbol: 'XAUUSD', timeframes: [] },
   sink: { file: true, file_path: './mt5-signal/tv_signal.json', http: true, http_port: 8787 },
   drawings: { enabled: true, mode: 'active', file_path: '', refresh_ms: 3000, max_labels: 60, show_boxes: true, max_boxes: 4 },
+  webhook: { port: 8080, secret: '' },
 };
 
 function deepMerge(base, override) {
