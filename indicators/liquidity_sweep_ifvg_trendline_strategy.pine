@@ -29,6 +29,9 @@ sweepRejectPerc = input.float(50, "Rejet mèche minimum (%)", minval=0, maxval=1
 grpFvg = "② IFVG"
 fvgMinAtr = input.float(0.25, "Taille min. du gap (× ATR)", minval=0, group=grpFvg)
 ifvgKeep  = input.int(30,     "Bougies de validité IFVG",   minval=1, group=grpFvg)
+showFvg   = input.bool(true,  "Afficher les IFVG",          group=grpFvg)
+ifvgFill  = input.int(90,     "Transparence remplissage (%)", minval=0, maxval=100, group=grpFvg)
+ifvgBorder= input.int(1,      "Épaisseur bordure (px)",     minval=1, maxval=3, group=grpFvg)
 
 grpTl = "③ Cassure de trendline"
 tlPivotLen = input.int(8,   "Longueur pivot trendline", minval=2, group=grpTl)
@@ -95,6 +98,7 @@ type Fvg
     bool  bull
     bool  inverted
     int   bornBar
+    box   bx
 
 var array<Fvg> fvgs = array.new<Fvg>()
 
@@ -102,9 +106,9 @@ bullFvg = low > high[2] and (low - high[2]) >= atr * fvgMinAtr
 bearFvg = high < low[2] and (low[2] - high) >= atr * fvgMinAtr
 
 if bullFvg
-    array.push(fvgs, Fvg.new(low, high[2], true, false, bar_index))
+    array.push(fvgs, Fvg.new(low, high[2], true, false, bar_index, na))
 if bearFvg
-    array.push(fvgs, Fvg.new(low[2], high, false, false, bar_index))
+    array.push(fvgs, Fvg.new(low[2], high, false, false, bar_index, na))
 
 bool ifvgBull = false
 bool ifvgBear = false
@@ -113,17 +117,37 @@ if array.size(fvgs) > 0
     for i = array.size(fvgs) - 1 to 0
         Fvg f = array.get(fvgs, i)
         if bar_index - f.bornBar > ifvgKeep * 4
+            if not na(f.bx)
+                box.delete(f.bx)
             array.remove(fvgs, i)
             continue
         if not f.inverted
+            bool justInverted = false
             if f.bull and close < f.bot
                 f.inverted := true
                 ifvgBear := true
                 f.bornBar := bar_index
+                justInverted := true
             if (not f.bull) and close > f.top
                 f.inverted := true
                 ifvgBull := true
                 f.bornBar := bar_index
+                justInverted := true
+            if justInverted and showFvg
+                zcol = f.bull ? cBear : cBull
+                f.bx := box.new(bar_index, f.top, bar_index, f.bot,
+                     border_color=color.new(zcol, 0), border_width=ifvgBorder,
+                     bgcolor=color.new(zcol, ifvgFill))
+            array.set(fvgs, i, f)
+        else
+            if not na(f.bx)
+                box.set_right(f.bx, bar_index)
+            invalidated = f.bull ? close > f.top : close < f.bot
+            if invalidated
+                if not na(f.bx)
+                    box.delete(f.bx)
+                array.remove(fvgs, i)
+                continue
             array.set(fvgs, i, f)
 
 // ========================= ③ CASSURE DE TRENDLINE ============================

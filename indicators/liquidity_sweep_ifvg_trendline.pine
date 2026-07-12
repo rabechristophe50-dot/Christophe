@@ -32,6 +32,8 @@ showSweep       = input.bool(true, "Afficher les sweeps",          group=grpSwp)
 grpFvg = "② IFVG (Inverse Fair Value Gap)"
 fvgMinAtr   = input.float(0.25, "Taille min. du gap (× ATR)",  minval=0, group=grpFvg, tooltip="Filtre les micro-gaps : le gap doit valoir au moins ce multiple de l'ATR(14).")
 ifvgKeep    = input.int(30,   "Bougies de validité IFVG",      minval=1, group=grpFvg, tooltip="Durée de vie d'un IFVG une fois créé.")
+ifvgFill    = input.int(90,   "Transparence remplissage (%)",  minval=0, maxval=100, group=grpFvg, tooltip="90 = rectangle très léger/fin. 0 = plein.")
+ifvgBorder  = input.int(1,    "Épaisseur bordure (px)",        minval=1, maxval=3, group=grpFvg, tooltip="1 = rectangle le plus fin.")
 showFvg     = input.bool(true, "Afficher les IFVG",            group=grpFvg)
 
 grpTl = "③ Cassure de trendline"
@@ -117,20 +119,42 @@ if array.size(fvgs) > 0
             array.remove(fvgs, i)
             continue
         if not f.inverted
-            // inversion d'un FVG haussier -> clôture sous le bas du gap
+            bool justInverted = false
+            // inversion d'un FVG haussier -> clôture sous le bas du gap (devient résistance)
             if f.bull and close < f.bot
                 f.inverted := true
                 ifvgBear := true
                 f.bornBar := bar_index
-            // inversion d'un FVG baissier -> clôture au-dessus du haut du gap
+                justInverted := true
+            // inversion d'un FVG baissier -> clôture au-dessus du haut du gap (devient support)
             if (not f.bull) and close > f.top
                 f.inverted := true
                 ifvgBull := true
                 f.bornBar := bar_index
+                justInverted := true
+            // à l'inversion : trace le rectangle FIN de la zone IFVG (top->bot du gap)
+            if justInverted and showFvg
+                // couleur = sens APRÈS inversion (haussier=support / baissier=résistance)
+                zcol = f.bull ? cBear : cBull
+                f.bx := box.new(bar_index, f.top, bar_index, f.bot,
+                     border_color=color.new(zcol, 0), border_width=ifvgBorder,
+                     bgcolor=color.new(zcol, ifvgFill))
+            array.set(fvgs, i, f)
+        else
+            // IFVG actif : on prolonge le rectangle vers la droite
+            if not na(f.bx)
+                box.set_right(f.bx, bar_index)
+            // invalidation : le prix referme complètement de l'autre côté de la zone
+            invalidated = f.bull ? close > f.top : close < f.bot
+            if invalidated
+                if not na(f.bx)
+                    box.delete(f.bx)
+                array.remove(fvgs, i)
+                continue
             array.set(fvgs, i, f)
 
 if showFvg and (ifvgBull or ifvgBear)
-    col = ifvgBull ? color.new(cBull, 80) : color.new(cBear, 80)
+    col = ifvgBull ? color.new(cBull, 20) : color.new(cBear, 20)
     label.new(bar_index, ifvgBull ? low : high, ifvgBull ? "IFVG+" : "IFVG-", style=ifvgBull ? label.style_label_up : label.style_label_down, color=col, textcolor=color.white, size=size.tiny)
 
 // ========================= ③ CASSURE DE TRENDLINE ============================
