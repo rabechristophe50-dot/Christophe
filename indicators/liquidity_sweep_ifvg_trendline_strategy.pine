@@ -63,8 +63,7 @@ inSession = not useSession or not na(time(timeframe.period, sessTime))
 trendLongOk  = not useTrendFilter or close > ema
 trendShortOk = not useTrendFilter or close < ema
 
-if useTrendFilter
-    plot(ema, "EMA filtre", color=color.new(color.orange, 40))
+plot(useTrendFilter ? ema : na, "EMA filtre", color=color.new(color.orange, 40))
 
 // ============================ ① SWEEP DE LIQUIDITÉ ============================
 ph = ta.pivothigh(high, pivotLen, pivotLen)
@@ -154,17 +153,25 @@ if array.size(fvgs) > 0
 tlPh = ta.pivothigh(high, tlPivotLen, tlPivotLen)
 tlPl = ta.pivotlow(low,  tlPivotLen, tlPivotLen)
 
-var float ph1 = na, var int ph1x = na
-var float ph2 = na, var int ph2x = na
-var float pl1 = na, var int pl1x = na
-var float pl2 = na, var int pl2x = na
+var float ph1 = na
+var int   ph1x = na
+var float ph2 = na
+var int   ph2x = na
+var float pl1 = na
+var int   pl1x = na
+var float pl2 = na
+var int   pl2x = na
 
 if not na(tlPh)
-    ph2 := ph1, ph2x := ph1x
-    ph1 := tlPh, ph1x := bar_index - tlPivotLen
+    ph2 := ph1
+    ph2x := ph1x
+    ph1 := tlPh
+    ph1x := bar_index - tlPivotLen
 if not na(tlPl)
-    pl2 := pl1, pl2x := pl1x
-    pl1 := tlPl, pl1x := bar_index - tlPivotLen
+    pl2 := pl1
+    pl2x := pl1x
+    pl1 := tlPl
+    pl1x := bar_index - tlPivotLen
 
 f_project(float y1, int x1, float y2, int x2) =>
     slope = (x2 - x1) != 0 ? (y2 - y1) / (x2 - x1) : 0.0
