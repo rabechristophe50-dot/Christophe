@@ -1,0 +1,236 @@
+//@version=6
+// =============================================================================
+//  Liquidity Sweep + IFVG + Trendline Break — STRATEGY (backtestable)
+// -----------------------------------------------------------------------------
+//  Version stratégie de l'indicateur `liquidity_sweep_ifvg_trendline.pine`.
+//  Même logique de confluence (Sweep de liquidité + IFVG + Cassure de trendline)
+//  mais avec entrées/sorties, Stop Loss / Take Profit et statistiques de backtest.
+//
+//  Signal LONG  = Sweep bas + IFVG haussier actif + cassure trendline baissière.
+//  Signal SHORT = Sweep haut + IFVG baissier actif + cassure trendline haussière.
+//
+//  Gestion du risque :
+//    - SL basé sur ATR (ou sur l'extrême du sweep, selon le mode choisi).
+//    - TP en multiple du risque (R:R configurable).
+//    - Filtres optionnels : sens de tendance (EMA), plage horaire.
+// =============================================================================
+
+strategy("LS+IFVG+TL Strategy", shorttitle="LS+IFVG+TL Strat", overlay=true,
+     max_lines_count=500, max_boxes_count=500, max_labels_count=500,
+     initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10,
+     commission_type=strategy.commission.percent, commission_value=0.04, slippage=2,
+     calc_on_every_tick=false, process_orders_on_close=true)
+
+// ------------------------------ INPUTS ---------------------------------------
+grpSwp = "① Sweep de liquidité"
+pivotLen        = input.int(10,  "Longueur pivot (swing)", minval=2, group=grpSwp)
+sweepRejectPerc = input.float(50, "Rejet mèche minimum (%)", minval=0, maxval=100, group=grpSwp)
+
+grpFvg = "② IFVG"
+fvgMinAtr = input.float(0.25, "Taille min. du gap (× ATR)", minval=0, group=grpFvg)
+ifvgKeep  = input.int(30,     "Bougies de validité IFVG",   minval=1, group=grpFvg)
+
+grpTl = "③ Cassure de trendline"
+tlPivotLen = input.int(8,   "Longueur pivot trendline", minval=2, group=grpTl)
+tlConfirm  = input.bool(true, "Confirmer en clôture",    group=grpTl)
+
+grpSig = "④ Confluence"
+confluenceWindow = input.int(12, "Fenêtre de confluence (bougies)", minval=1, group=grpSig)
+requireAll       = input.bool(true, "Exiger les 3 conditions", group=grpSig)
+
+grpRisk = "⑤ Gestion du risque"
+slMode      = input.string("ATR", "Mode de Stop Loss", options=["ATR", "Extrême sweep"], group=grpRisk)
+atrMult     = input.float(1.5, "SL = ATR ×", minval=0.1, step=0.1, group=grpRisk)
+rr          = input.float(2.0, "Ratio Risque:Récompense (TP)", minval=0.1, step=0.1, group=grpRisk)
+useBE       = input.bool(true, "Break-even à +1R", group=grpRisk)
+
+grpFilt = "⑥ Filtres"
+useTrendFilter = input.bool(false, "Filtre de tendance EMA", group=grpFilt)
+emaLen         = input.int(200, "Longueur EMA", minval=1, group=grpFilt)
+useSession     = input.bool(false, "Filtre plage horaire", group=grpFilt)
+sessTime       = input.session("0800-1600", "Plage", group=grpFilt)
+
+cBull = input.color(color.new(#26a69a, 0), "Couleur haussière", group="Style")
+cBear = input.color(color.new(#ef5350, 0), "Couleur baissière", group="Style")
+
+// ------------------------------ HELPERS --------------------------------------
+atr = ta.atr(14)
+ema = ta.ema(close, emaLen)
+inSession = not useSession or not na(time(timeframe.period, sessTime))
+trendLongOk  = not useTrendFilter or close > ema
+trendShortOk = not useTrendFilter or close < ema
+
+if useTrendFilter
+    plot(ema, "EMA filtre", color=color.new(color.orange, 40))
+
+// ============================ ① SWEEP DE LIQUIDITÉ ============================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low,  pivotLen, pivotLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+rng = high - low
+wickReclaimUp = rng > 0 ? (close - low) / rng * 100 : 0
+sweepLow  = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow  and wickReclaimUp  >= sweepRejectPerc
+wickReclaimDn = rng > 0 ? (high - close) / rng * 100 : 0
+sweepHigh = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh and wickReclaimDn >= sweepRejectPerc
+
+// mémorise l'extrême du dernier sweep (utile pour le SL "Extrême sweep")
+var float lastSweepLowPrice  = na
+var float lastSweepHighPrice = na
+if sweepLow
+    lastSweepLowPrice := low
+if sweepHigh
+    lastSweepHighPrice := high
+
+// =============================== ② IFVG ======================================
+type Fvg
+    float top
+    float bot
+    bool  bull
+    bool  inverted
+    int   bornBar
+
+var array<Fvg> fvgs = array.new<Fvg>()
+
+bullFvg = low > high[2] and (low - high[2]) >= atr * fvgMinAtr
+bearFvg = high < low[2] and (low[2] - high) >= atr * fvgMinAtr
+
+if bullFvg
+    array.push(fvgs, Fvg.new(low, high[2], true, false, bar_index))
+if bearFvg
+    array.push(fvgs, Fvg.new(low[2], high, false, false, bar_index))
+
+bool ifvgBull = false
+bool ifvgBear = false
+
+if array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        Fvg f = array.get(fvgs, i)
+        if bar_index - f.bornBar > ifvgKeep * 4
+            array.remove(fvgs, i)
+            continue
+        if not f.inverted
+            if f.bull and close < f.bot
+                f.inverted := true
+                ifvgBear := true
+                f.bornBar := bar_index
+            if (not f.bull) and close > f.top
+                f.inverted := true
+                ifvgBull := true
+                f.bornBar := bar_index
+            array.set(fvgs, i, f)
+
+// ========================= ③ CASSURE DE TRENDLINE ============================
+tlPh = ta.pivothigh(high, tlPivotLen, tlPivotLen)
+tlPl = ta.pivotlow(low,  tlPivotLen, tlPivotLen)
+
+var float ph1 = na, var int ph1x = na
+var float ph2 = na, var int ph2x = na
+var float pl1 = na, var int pl1x = na
+var float pl2 = na, var int pl2x = na
+
+if not na(tlPh)
+    ph2 := ph1, ph2x := ph1x
+    ph1 := tlPh, ph1x := bar_index - tlPivotLen
+if not na(tlPl)
+    pl2 := pl1, pl2x := pl1x
+    pl1 := tlPl, pl1x := bar_index - tlPivotLen
+
+f_project(float y1, int x1, float y2, int x2) =>
+    slope = (x2 - x1) != 0 ? (y2 - y1) / (x2 - x1) : 0.0
+    y2 + slope * (bar_index - x2)
+
+bearTlValid = not na(ph1) and not na(ph2) and ph1 < ph2
+bullTlValid = not na(pl1) and not na(pl2) and pl1 > pl2
+
+float bearTlY = bearTlValid ? f_project(ph2, ph2x, ph1, ph1x) : na
+float bullTlY = bullTlValid ? f_project(pl2, pl2x, pl1, pl1x) : na
+
+crossVal   = tlConfirm ? close : high
+crossValDn = tlConfirm ? close : low
+tlBreakUp = bearTlValid and crossVal > bearTlY and (tlConfirm ? close[1] <= bearTlY[1] : true)
+tlBreakDn = bullTlValid and crossValDn < bullTlY and (tlConfirm ? close[1] >= bullTlY[1] : true)
+
+// ============================ ④ CONFLUENCE ===================================
+var int lastSweepLowBar  = na
+var int lastSweepHighBar = na
+var int lastIfvgBullBar  = na
+var int lastIfvgBearBar  = na
+var int lastTlUpBar      = na
+var int lastTlDnBar      = na
+
+if sweepLow
+    lastSweepLowBar := bar_index
+if sweepHigh
+    lastSweepHighBar := bar_index
+if ifvgBull
+    lastIfvgBullBar := bar_index
+if ifvgBear
+    lastIfvgBearBar := bar_index
+if tlBreakUp
+    lastTlUpBar := bar_index
+if tlBreakDn
+    lastTlDnBar := bar_index
+
+f_fresh(int b) => not na(b) and (bar_index - b) <= confluenceWindow
+
+longCount  = (f_fresh(lastSweepLowBar)  ? 1 : 0) + (f_fresh(lastIfvgBullBar) ? 1 : 0) + (f_fresh(lastTlUpBar) ? 1 : 0)
+shortCount = (f_fresh(lastSweepHighBar) ? 1 : 0) + (f_fresh(lastIfvgBearBar) ? 1 : 0) + (f_fresh(lastTlDnBar) ? 1 : 0)
+needed = requireAll ? 3 : 2
+
+longSignal  = longCount  >= needed and strategy.position_size == 0 and inSession and trendLongOk
+shortSignal = shortCount >= needed and strategy.position_size == 0 and inSession and trendShortOk
+
+// ============================ ENTRÉES / SORTIES ==============================
+// calcul du SL à l'entrée
+f_slLong() =>
+    slMode == "ATR" ? close - atr * atrMult : (not na(lastSweepLowPrice) ? math.min(lastSweepLowPrice, low) : close - atr * atrMult)
+f_slShort() =>
+    slMode == "ATR" ? close + atr * atrMult : (not na(lastSweepHighPrice) ? math.max(lastSweepHighPrice, high) : close + atr * atrMult)
+
+var float entryPrice = na
+var float stopPrice  = na
+var float tpPrice    = na
+var bool  beMoved    = false
+
+if longSignal
+    entryPrice := close
+    stopPrice  := f_slLong()
+    risk       = entryPrice - stopPrice
+    tpPrice    := entryPrice + risk * rr
+    beMoved    := false
+    strategy.entry("LONG", strategy.long)
+
+if shortSignal
+    entryPrice := close
+    stopPrice  := f_slShort()
+    risk       = stopPrice - entryPrice
+    tpPrice    := entryPrice - risk * rr
+    beMoved    := false
+    strategy.entry("SHORT", strategy.short)
+
+// break-even à +1R
+if useBE and strategy.position_size > 0 and not beMoved and high >= entryPrice + (entryPrice - stopPrice)
+    stopPrice := entryPrice
+    beMoved := true
+if useBE and strategy.position_size < 0 and not beMoved and low <= entryPrice - (stopPrice - entryPrice)
+    stopPrice := entryPrice
+    beMoved := true
+
+if strategy.position_size > 0
+    strategy.exit("Exit L", from_entry="LONG", stop=stopPrice, limit=tpPrice)
+if strategy.position_size < 0
+    strategy.exit("Exit S", from_entry="SHORT", stop=stopPrice, limit=tpPrice)
+
+// ------------------------------ VISUEL ---------------------------------------
+plotshape(longSignal,  title="Entrée LONG",  style=shape.triangleup,   location=location.belowbar, color=cBull, size=size.small, text="L")
+plotshape(shortSignal, title="Entrée SHORT", style=shape.triangledown, location=location.abovebar, color=cBear, size=size.small, text="S")
+
+plot(strategy.position_size != 0 ? stopPrice : na, "SL", color=color.new(color.red, 0),   style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tpPrice  : na, "TP", color=color.new(color.green, 0), style=plot.style_linebr)

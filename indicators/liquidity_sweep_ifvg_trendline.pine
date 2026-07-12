@@ -1,0 +1,260 @@
+//@version=6
+// =============================================================================
+//  Liquidity Sweep + IFVG + Trendline Break — Confluence Strategy Indicator
+// -----------------------------------------------------------------------------
+//  Concept :
+//    1) SWEEP DE LIQUIDITÉ  -> le prix balaie un swing high/low (chasse aux stops)
+//                              puis referme de l'autre côté (rejet).
+//    2) IFVG (Inverse FVG)  -> un Fair Value Gap qui se fait invalider/traverser
+//                              et s'inverse : il devient support/résistance dans
+//                              le sens opposé.
+//    3) CASSURE DE TRENDLINE-> une ligne de tendance (reliant 2 pivots) est
+//                              cassée en clôture.
+//
+//  Signal LONG  = Sweep bas (liquidité prise sous un low) + IFVG haussier actif
+//                 + cassure de la trendline baissière.
+//  Signal SHORT = Sweep haut (liquidité prise au-dessus d'un high) + IFVG baissier
+//                 actif + cassure de la trendline haussière.
+//
+//  Les 3 conditions n'ont pas besoin d'arriver sur la même bougie : chacune reste
+//  "armée" pendant `confluenceWindow` bougies. Le signal se déclenche quand la
+//  confluence est complète dans la fenêtre.
+// =============================================================================
+
+indicator("Liquidity Sweep + IFVG + Trendline Break", shorttitle="LS+IFVG+TL", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ------------------------------ INPUTS ---------------------------------------
+grpSwp = "① Sweep de liquidité"
+pivotLen        = input.int(10,  "Longueur pivot (swing)",         minval=2, group=grpSwp, tooltip="Nombre de bougies de chaque côté pour valider un swing high/low.")
+sweepRejectPerc = input.float(50, "Rejet mèche minimum (%)",       minval=0, maxval=100, group=grpSwp, tooltip="La clôture doit refermer d'au moins ce % de la mèche du côté opposé au balayage.")
+showSweep       = input.bool(true, "Afficher les sweeps",          group=grpSwp)
+
+grpFvg = "② IFVG (Inverse Fair Value Gap)"
+fvgMinAtr   = input.float(0.25, "Taille min. du gap (× ATR)",  minval=0, group=grpFvg, tooltip="Filtre les micro-gaps : le gap doit valoir au moins ce multiple de l'ATR(14).")
+ifvgKeep    = input.int(30,   "Bougies de validité IFVG",      minval=1, group=grpFvg, tooltip="Durée de vie d'un IFVG une fois créé.")
+showFvg     = input.bool(true, "Afficher les IFVG",            group=grpFvg)
+
+grpTl = "③ Cassure de trendline"
+tlPivotLen  = input.int(8,   "Longueur pivot trendline",  minval=2, group=grpTl)
+tlConfirm   = input.bool(true, "Confirmer en clôture",     group=grpTl, tooltip="Exige une clôture au-delà de la trendline (sinon simple dépassement en mèche).")
+showTl      = input.bool(true, "Afficher les trendlines",  group=grpTl)
+
+grpSig = "④ Signaux / Confluence"
+confluenceWindow = input.int(12, "Fenêtre de confluence (bougies)", minval=1, group=grpSig, tooltip="Les 3 conditions doivent se produire dans cette fenêtre glissante.")
+requireAll       = input.bool(true, "Exiger les 3 conditions",      group=grpSig, tooltip="Off = signal dès que 2 des 3 conditions sont réunies.")
+alertsOn         = input.bool(true, "Activer les alertes",          group=grpSig)
+
+// couleurs
+cBull = input.color(color.new(#26a69a, 0), "Couleur haussière", group="Style")
+cBear = input.color(color.new(#ef5350, 0), "Couleur baissière", group="Style")
+
+// ------------------------------ HELPERS --------------------------------------
+atr = ta.atr(14)
+
+// ============================ ① SWEEP DE LIQUIDITÉ ============================
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low,  pivotLen, pivotLen)
+
+// mémorise le dernier swing haut/bas confirmé
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+// Sweep haussier (bas balayé) : le low casse le dernier swing low mais la clôture
+// referme au-dessus, en récupérant au moins `sweepRejectPerc` % de la mèche basse.
+rng = high - low
+wickReclaimUp = rng > 0 ? (close - low) / rng * 100 : 0
+sweepLow  = not na(lastSwingLow)  and low  < lastSwingLow  and close > lastSwingLow  and wickReclaimUp  >= sweepRejectPerc
+
+// Sweep baissier (haut balayé)
+wickReclaimDn = rng > 0 ? (high - close) / rng * 100 : 0
+sweepHigh = not na(lastSwingHigh) and high > lastSwingHigh and close < lastSwingHigh and wickReclaimDn >= sweepRejectPerc
+
+if showSweep and sweepLow
+    label.new(bar_index, low, "SWEEP↓", style=label.style_label_up, color=color.new(cBull, 20), textcolor=color.white, size=size.tiny)
+if showSweep and sweepHigh
+    label.new(bar_index, high, "SWEEP↑", style=label.style_label_down, color=color.new(cBear, 20), textcolor=color.white, size=size.tiny)
+
+// =============================== ② IFVG ======================================
+// FVG haussier : gap entre high[2] et low[0] (low[0] > high[2]).
+// FVG baissier : gap entre low[2] et high[0] (high[0] < low[2]).
+// IFVG : un FVG qui est ensuite TRAVERSÉ en clôture -> il s'inverse.
+//   - Un FVG haussier cassé à la baisse devient une RÉSISTANCE (IFVG baissier).
+//   - Un FVG baissier cassé à la hausse devient un SUPPORT (IFVG haussier).
+
+type Fvg
+    float top
+    float bot
+    bool  bull      // sens d'origine du FVG
+    bool  inverted  // devenu IFVG ?
+    int   bornBar
+    box   bx
+
+var array<Fvg> fvgs = array.new<Fvg>()
+
+bullFvg = low > high[2] and (low - high[2]) >= atr * fvgMinAtr
+bearFvg = high < low[2] and (low[2] - high) >= atr * fvgMinAtr
+
+if bullFvg
+    array.push(fvgs, Fvg.new(low, high[2], true, false, bar_index, na))
+if bearFvg
+    array.push(fvgs, Fvg.new(low[2], high, false, false, bar_index, na))
+
+// signaux IFVG produits cette bougie
+bool ifvgBull = false
+bool ifvgBear = false
+
+if array.size(fvgs) > 0
+    for i = array.size(fvgs) - 1 to 0
+        Fvg f = array.get(fvgs, i)
+        // purge des vieux gaps
+        if bar_index - f.bornBar > ifvgKeep * 4
+            if not na(f.bx)
+                box.delete(f.bx)
+            array.remove(fvgs, i)
+            continue
+        if not f.inverted
+            // inversion d'un FVG haussier -> clôture sous le bas du gap
+            if f.bull and close < f.bot
+                f.inverted := true
+                ifvgBear := true
+                f.bornBar := bar_index
+            // inversion d'un FVG baissier -> clôture au-dessus du haut du gap
+            if (not f.bull) and close > f.top
+                f.inverted := true
+                ifvgBull := true
+                f.bornBar := bar_index
+            array.set(fvgs, i, f)
+
+if showFvg and (ifvgBull or ifvgBear)
+    col = ifvgBull ? color.new(cBull, 80) : color.new(cBear, 80)
+    label.new(bar_index, ifvgBull ? low : high, ifvgBull ? "IFVG+" : "IFVG-", style=ifvgBull ? label.style_label_up : label.style_label_down, color=col, textcolor=color.white, size=size.tiny)
+
+// ========================= ③ CASSURE DE TRENDLINE ============================
+// Trendline baissière : relie les 2 derniers pivots highs descendants.
+// Trendline haussière : relie les 2 derniers pivots lows montants.
+tlPh = ta.pivothigh(high, tlPivotLen, tlPivotLen)
+tlPl = ta.pivotlow(low,  tlPivotLen, tlPivotLen)
+
+var float ph1 = na, var int ph1x = na
+var float ph2 = na, var int ph2x = na
+var float pl1 = na, var int pl1x = na
+var float pl2 = na, var int pl2x = na
+
+if not na(tlPh)
+    ph2 := ph1, ph2x := ph1x
+    ph1 := tlPh, ph1x := bar_index - tlPivotLen
+if not na(tlPl)
+    pl2 := pl1, pl2x := pl1x
+    pl1 := tlPl, pl1x := bar_index - tlPivotLen
+
+// pente + valeur projetée des trendlines à la bougie courante
+f_project(float y1, int x1, float y2, int x2) =>
+    slope = (x2 - x1) != 0 ? (y2 - y1) / (x2 - x1) : 0.0
+    y2 + slope * (bar_index - x2)
+
+// trendline baissière valable si les 2 highs descendent
+bearTlValid = not na(ph1) and not na(ph2) and ph1 < ph2
+bullTlValid = not na(pl1) and not na(pl2) and pl1 > pl2
+
+float bearTlY = bearTlValid ? f_project(ph2, ph2x, ph1, ph1x) : na
+float bullTlY = bullTlValid ? f_project(pl2, pl2x, pl1, pl1x) : na
+
+crossVal = tlConfirm ? close : high
+crossValDn = tlConfirm ? close : low
+
+tlBreakUp = bearTlValid and crossVal > bearTlY and (tlConfirm ? close[1] <= bearTlY[1] : true)
+tlBreakDn = bullTlValid and crossValDn < bullTlY and (tlConfirm ? close[1] >= bullTlY[1] : true)
+
+var line bearTlLine = na
+var line bullTlLine = na
+if showTl and bearTlValid and not na(ph1x) and not na(ph2x)
+    line.delete(bearTlLine)
+    bearTlLine := line.new(ph2x, ph2, ph1x, ph1, extend=extend.right, color=color.new(cBear, 0), width=1, style=line.style_dashed)
+if showTl and bullTlValid and not na(pl1x) and not na(pl2x)
+    line.delete(bullTlLine)
+    bullTlLine := line.new(pl2x, pl2, pl1x, pl1, extend=extend.right, color=color.new(cBull, 0), width=1, style=line.style_dashed)
+
+if showTl and tlBreakUp
+    label.new(bar_index, high, "TL BREAK ↑", style=label.style_label_down, color=color.new(cBull, 30), textcolor=color.white, size=size.tiny)
+if showTl and tlBreakDn
+    label.new(bar_index, low, "TL BREAK ↓", style=label.style_label_up, color=color.new(cBear, 30), textcolor=color.white, size=size.tiny)
+
+// ============================ ④ CONFLUENCE ===================================
+// On garde en mémoire la bougie de dernière occurrence de chaque condition,
+// pour chaque direction, puis on vérifie que tout tombe dans la fenêtre.
+var int lastSweepLowBar  = na
+var int lastSweepHighBar = na
+var int lastIfvgBullBar  = na
+var int lastIfvgBearBar  = na
+var int lastTlUpBar      = na
+var int lastTlDnBar      = na
+
+if sweepLow
+    lastSweepLowBar := bar_index
+if sweepHigh
+    lastSweepHighBar := bar_index
+if ifvgBull
+    lastIfvgBullBar := bar_index
+if ifvgBear
+    lastIfvgBearBar := bar_index
+if tlBreakUp
+    lastTlUpBar := bar_index
+if tlBreakDn
+    lastTlDnBar := bar_index
+
+f_fresh(int b) => not na(b) and (bar_index - b) <= confluenceWindow
+
+// composantes actives (fraîches) par direction
+longSweep = f_fresh(lastSweepLowBar)
+longIfvg  = f_fresh(lastIfvgBullBar)
+longTl    = f_fresh(lastTlUpBar)
+shortSweep= f_fresh(lastSweepHighBar)
+shortIfvg = f_fresh(lastIfvgBearBar)
+shortTl   = f_fresh(lastTlDnBar)
+
+longCount  = (longSweep ? 1 : 0) + (longIfvg ? 1 : 0) + (longTl ? 1 : 0)
+shortCount = (shortSweep ? 1 : 0) + (shortIfvg ? 1 : 0) + (shortTl ? 1 : 0)
+
+needed = requireAll ? 3 : 2
+
+// on ne déclenche qu'au moment où la confluence VIENT d'être complétée
+var int lastLongSignalBar = na
+var int lastShortSignalBar = na
+
+longSignal  = longCount  >= needed and (na(lastLongSignalBar)  or bar_index - lastLongSignalBar  > confluenceWindow)
+shortSignal = shortCount >= needed and (na(lastShortSignalBar) or bar_index - lastShortSignalBar > confluenceWindow)
+
+if longSignal
+    lastLongSignalBar := bar_index
+if shortSignal
+    lastShortSignalBar := bar_index
+
+plotshape(longSignal,  title="Signal LONG",  style=shape.triangleup,   location=location.belowbar, color=cBull, size=size.normal, text="LONG")
+plotshape(shortSignal, title="Signal SHORT", style=shape.triangledown, location=location.abovebar, color=cBear, size=size.normal, text="SHORT")
+
+bgcolor(longSignal ? color.new(cBull, 88) : shortSignal ? color.new(cBear, 88) : na)
+
+// ------------------------------ TABLEAU --------------------------------------
+var table dash = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(dash, 0, 0, "Composante", text_color=color.white, bgcolor=color.new(color.gray, 0), text_size=size.tiny)
+    table.cell(dash, 1, 0, "L / S",      text_color=color.white, bgcolor=color.new(color.gray, 0), text_size=size.tiny)
+    table.cell(dash, 0, 1, "Sweep",  text_size=size.tiny)
+    table.cell(dash, 1, 1, (longSweep?"✓":"·") + " / " + (shortSweep?"✓":"·"), text_size=size.tiny)
+    table.cell(dash, 0, 2, "IFVG",   text_size=size.tiny)
+    table.cell(dash, 1, 2, (longIfvg?"✓":"·") + " / " + (shortIfvg?"✓":"·"), text_size=size.tiny)
+    table.cell(dash, 0, 3, "Trendline", text_size=size.tiny)
+    table.cell(dash, 1, 3, (longTl?"✓":"·") + " / " + (shortTl?"✓":"·"), text_size=size.tiny)
+
+// ------------------------------ ALERTES --------------------------------------
+alertcondition(longSignal,  "LONG — Sweep+IFVG+TL",  "Confluence LONG : sweep de liquidité + IFVG haussier + cassure trendline")
+alertcondition(shortSignal, "SHORT — Sweep+IFVG+TL", "Confluence SHORT : sweep de liquidité + IFVG baissier + cassure trendline")
+
+if alertsOn and longSignal
+    alert("Signal LONG (Sweep + IFVG + Trendline break)", alert.freq_once_per_bar_close)
+if alertsOn and shortSignal
+    alert("Signal SHORT (Sweep + IFVG + Trendline break)", alert.freq_once_per_bar_close)
