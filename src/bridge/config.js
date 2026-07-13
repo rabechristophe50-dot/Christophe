@@ -30,6 +30,8 @@ const DEFAULTS = {
     sl_keywords: ['sl', 'stop'],
     tp_keywords: ['tp', 'target', 'take profit'],
     use_label_price: true,
+    require: true,      // ne PAS ouvrir si SL/TP introuvable (evite les positions nues)
+    read_tries: 3,      // relire le SL/TP plusieurs fois (RUGA met un instant a le dessiner)
   },
   order: { lot: 0.1, sl_points: 0, tp_points: 0, close_opposite: true },
   guard: { enabled: true, symbol: 'XAUUSD', timeframes: [] },

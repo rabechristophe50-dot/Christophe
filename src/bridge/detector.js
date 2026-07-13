@@ -366,8 +366,17 @@ export class SignalDetector {
     if (state == null) { this.status = 'alerte declenchee mais sens indetermine'; return null; }
 
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
-    this.status = `>>> ALERTE ${dir} declenchee -> envoye a MT5`;
-    return await this._buildSignal({ state, price, reason });
+    const signal = await this._buildSignal({ state, price, reason });
+
+    // Securite : ne PAS ouvrir une position nue. Si le SL/TP est introuvable
+    // (signal non confirme / repaint), on ignore ce declenchement.
+    if (this.sltp?.enabled && this.sltp?.require !== false && (!signal.sl_price || !signal.tp_price)) {
+      this.status = `alerte ${dir} IGNOREE : SL/TP introuvable (signal non confirme ?) - pas de position nue`;
+      return null;
+    }
+
+    this.status = `>>> ALERTE ${dir} declenchee (SL=${signal.sl_price} TP=${signal.tp_price}) -> envoye a MT5`;
+    return signal;
   }
 
   /** Sens + prix du signal RUGA actif = la fleche la plus proche du prix. */
@@ -411,13 +420,20 @@ export class SignalDetector {
         try { entryPrice = (await this.data.getQuote({}))?.price ?? null; } catch { entryPrice = null; }
       }
       if (entryPrice != null) {
-        try {
-          const lv = await this.readSlTp({ isBuy: action === 'BUY', entryPrice });
-          sl_price = lv.sl_price;
-          tp_price = lv.tp_price;
-          if (sl_price > 0) sl_dist = Math.round(Math.abs(entryPrice - sl_price) * 100) / 100;
-          if (tp_price > 0) tp_dist = Math.round(Math.abs(entryPrice - tp_price) * 100) / 100;
-        } catch { /* SL/TP optionnels */ }
+        // On reessaie quelques fois : au moment du signal, RUGA peut mettre un
+        // court instant a dessiner le SL/TP.
+        const tries = Math.max(1, this.sltp?.read_tries || 3);
+        for (let i = 0; i < tries; i++) {
+          try {
+            const lv = await this.readSlTp({ isBuy: action === 'BUY', entryPrice });
+            sl_price = lv.sl_price;
+            tp_price = lv.tp_price;
+          } catch { /* on reessaie */ }
+          if (sl_price > 0 && tp_price > 0) break;
+          if (i < tries - 1) await new Promise((r) => setTimeout(r, 600));
+        }
+        if (sl_price > 0) sl_dist = Math.round(Math.abs(entryPrice - sl_price) * 100) / 100;
+        if (tp_price > 0) tp_dist = Math.round(Math.abs(entryPrice - tp_price) * 100) / 100;
       }
     }
 
