@@ -61,8 +61,8 @@
   },
 
   "drawings": {
-    "_comment": "Miroir visuel sur MT5. mode 'active' = seulement le dernier signal + son SL/TP (recommande). mode 'all' = tout l'historique recent.",
-    "enabled": true,
+    "_comment": "Miroir visuel sur MT5 (dessins). false = desactive (ne dessine rien sur MT5).",
+    "enabled": false,
     "mode": "active",
     "file_path": "",
     "refresh_ms": 3000,
