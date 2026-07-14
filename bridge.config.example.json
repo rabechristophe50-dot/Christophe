@@ -1,0 +1,72 @@
+{
+  "poll_ms": 1000,
+
+  "_comment_symbol_map": "Symbole TradingView -> symbole du courtier MT5. Ex: 'BTCUSDT' cote TV peut s'appeler 'BTCUSD' chez ton broker.",
+  "symbol_map": {
+    "BTCUSDT": "BTCUSD",
+    "XAUUSD": "XAUUSD",
+    "NAS100": "NAS100"
+  },
+  "default_symbol": "EURUSD",
+
+  "indicator": {
+    "_comment": "study_filter = un bout du NOM de ton indicateur verrouille (laisse vide pour scanner tout). mode = comment lire le signal.",
+    "study_filter": "",
+    "_comment_mode": "'journal' = LE PLUS FIABLE : lit le VRAI message du tir dans le panneau Alertes->Journal (sens+SL+TP en chiffres). 'alert' = detecte le tir + lit le graphique. 'label' = fleches dessinees. 'study_value' = valeur numerique.",
+    "mode": "journal",
+
+    "_comment_label": "mode 'label' : on lit les labels dessines par label.new() et on cherche ces mots-cles (insensible a la casse).",
+    "buy_keywords": ["buy", "long", "bull", "▲", "🟢", "call"],
+    "sell_keywords": ["sell", "short", "bear", "▼", "🔴", "put"],
+    "flat_keywords": ["close", "exit", "flat", "tp hit", "sl hit"],
+    "_comment_exclude": "Labels JAMAIS traites comme entree, meme s'ils contiennent buy/sell (ex. 'BUY LIMIT' = ordre en attente).",
+    "exclude_keywords": ["limit"],
+    "_comment_entry": "Mode 'alert' : on ne trade QUE les messages contenant un de ces mots (vraie ENTREE). Les autres alert() de RUGA (TP HIT, SL HIT, EXIT...) sont ignores pour eviter les faux trades.",
+    "entry_keywords": ["entry", "entrée", "entree"],
+    "_comment_max_entry": "Anti-repaint : ignore un signal dont le label est a plus de X% du prix actuel (vieux label redessine). 0 = desactive.",
+    "max_entry_pct": 0.5,
+    "_comment_confirm": "0 = entree IMMEDIATE des qu'un nouveau signal s'affiche. Mets >0 (ex. 60) seulement si tu veux attendre que le signal persiste (anti-repaint).",
+    "confirm_seconds": 0,
+
+    "_comment_study_value": "mode 'study_value' : on lit une valeur numerique de la fenetre de donnees (Data Window).",
+    "study_value": {
+      "field": "Signal",
+      "long_when": "> 0",
+      "short_when": "< 0",
+      "flat_when": "== 0"
+    }
+  },
+
+  "sltp": {
+    "_comment": "SL/TP lus DIRECTEMENT depuis l'indicateur (niveaux dessines). Prioritaire sur order.sl_points/tp_points.",
+    "enabled": true,
+    "_comment_source": "'label' = labels type 'SL 24500'/'TP 24600' ; 'line' = lignes horizontales (deduit par position) ; 'auto' = essaie label puis line.",
+    "source": "auto",
+    "sl_keywords": ["sl", "stop", "s/l", "🛑"],
+    "tp_keywords": ["tp", "target", "take profit", "t/p", "🎯"],
+    "use_label_price": true
+  },
+
+  "guard": {
+    "_comment": "Ne trader QUE si TradingView est sur ce symbole. timeframes vide = TOUS les timeframes autorises. Mets ['5','15'] pour limiter au M5/M15.",
+    "enabled": true,
+    "symbol": "XAUUSD",
+    "timeframes": []
+  },
+
+  "order": {
+    "lot": 0.10,
+    "sl_points": 0,
+    "tp_points": 0,
+    "close_opposite": true,
+    "_comment": "sl_points/tp_points = SECOURS en points broker si l'indicateur ne fournit pas de niveau (0 = desactive). close_opposite ferme la position inverse avant d'ouvrir."
+  },
+
+  "sink": {
+    "file": true,
+    "_comment_file_path": "Chemin ou ecrire le signal. IDEAL: le dossier Common\\Files de MT5 pour que l'EA le lise directement.",
+    "file_path": "./mt5-signal/tv_signal.json",
+    "http": true,
+    "http_port": 8787
+  }
+}

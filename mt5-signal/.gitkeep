@@ -1,0 +1,2 @@
+Le pont Node ecrit tv_signal.json ici (ou directement dans le dossier
+Common\Files de MT5 selon bridge.config.json > sink.file_path).
