@@ -352,16 +352,13 @@ export class SignalDetector {
     if (hasBuy && !hasSell) state = STATE.LONG;
     else if (hasSell && !hasBuy) state = STATE.SHORT;
 
-    // 2) Si l'alerte est combinee (buy ET sell, ou ni l'un ni l'autre),
-    //    on lit le sens sur le graphique (la fleche la plus proche du prix).
-    let price = null;
-    let reason = fired.message || fired.condition || 'alerte';
-    if (state == null) {
-      const chart = await this._nearestChartSignal();
-      state = chart?.state ?? null;
-      price = chart?.price ?? null;
-      if (chart?.reason) reason = chart.reason;
-    }
+    // 2) Prix d'ENTREE = le niveau "BUY/SELL ENTRY" que RUGA dessine (PAS le prix
+    //    courant : sinon, si le prix a bouge, le SL/TP tombe "du mauvais cote"
+    //    et devient introuvable). On lit l'entree RUGA du bon sens, proche du prix.
+    const chart = await this._nearestChartSignal(state);
+    if (state == null) state = chart?.state ?? null; // alerte combinee -> sens du graphique
+    let price = chart?.price ?? null;                // niveau d'entree RUGA
+    let reason = chart?.reason || fired.message || fired.condition || 'alerte';
     if (price == null) { try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; } }
     if (state == null) { this.status = 'alerte declenchee mais sens indetermine'; return null; }
 
@@ -379,18 +376,30 @@ export class SignalDetector {
     return signal;
   }
 
-  /** Sens + prix du signal RUGA actif = la fleche la plus proche du prix. */
-  async _nearestChartSignal() {
+  /**
+   * Entree RUGA la plus proche du prix. Si preferredState est donne, on ne
+   * garde que les entrees de ce sens (ex. l'alerte dit BUY -> on prend le
+   * "BUY ENTRY", pas un "SELL ENTRY" qui serait plus proche).
+   */
+  async _nearestChartSignal(preferredState = null) {
     let entries = [];
     try { entries = await this.readAllEntries(); } catch { return null; }
     if (!entries.length) return null;
     let curPrice = null;
     try { curPrice = (await this.data.getQuote({}))?.price ?? null; } catch { curPrice = null; }
+
+    const pick = (list) => {
+      let best = null;
+      for (const e of list) {
+        const dist = (curPrice != null && e.price != null) ? Math.abs(e.price - curPrice) : Infinity;
+        if (best === null || dist < best.dist) best = { dist, state: e.state, price: e.price, reason: e.reason };
+      }
+      return best;
+    };
+
     let best = null;
-    for (const e of entries) {
-      const dist = (curPrice != null && e.price != null) ? Math.abs(e.price - curPrice) : Infinity;
-      if (best === null || dist < best.dist) best = { dist, state: e.state, price: e.price, reason: e.reason };
-    }
+    if (preferredState != null) best = pick(entries.filter((e) => e.state === preferredState));
+    if (!best) best = pick(entries); // aucun du bon sens -> le plus proche tout court
     return best ? { state: best.state, price: best.price, reason: best.reason } : null;
   }
 
