@@ -344,26 +344,31 @@ export class SignalDetector {
 
     if (!fired) { this.status = `${relevant.length} alertes surveillees (aucun declenchement)`; return null; }
 
-    // 1) Sens depuis l'ALERTE (fiable si alertes BUY / SELL separees).
-    const txt = `${fired.message || ''} ${fired.condition || ''}`;
-    const hasBuy = matchesAny(txt, this.ind.buy_keywords);
-    const hasSell = matchesAny(txt, this.ind.sell_keywords);
-    let state = null;
-    if (hasBuy && !hasSell) state = STATE.LONG;
-    else if (hasSell && !hasBuy) state = STATE.SHORT;
+    // On decode le MESSAGE de l'alerte : sens + SL + TP + entree (en chiffres).
+    const parsed = this._parseAlertMessage(fired.message || '');
+    let state = parsed.state;
+    // Sens de secours depuis la condition (alertes BUY/SELL separees).
+    if (state == null) {
+      const c = `${fired.condition || ''}`;
+      const cb = matchesAny(c, this.ind.buy_keywords), cs = matchesAny(c, this.ind.sell_keywords);
+      if (cb && !cs) state = STATE.LONG; else if (cs && !cb) state = STATE.SHORT;
+    }
 
-    // 2) Prix d'ENTREE = le niveau "BUY/SELL ENTRY" que RUGA dessine (PAS le prix
-    //    courant : sinon, si le prix a bouge, le SL/TP tombe "du mauvais cote"
-    //    et devient introuvable). On lit l'entree RUGA du bon sens, proche du prix.
-    const chart = await this._nearestChartSignal(state);
-    if (state == null) state = chart?.state ?? null; // alerte combinee -> sens du graphique
-    let price = chart?.price ?? null;                // niveau d'entree RUGA
-    let reason = chart?.reason || fired.message || fired.condition || 'alerte';
+    // Entree : celle du message si presente, sinon le niveau RUGA sur le graphique.
+    let price = parsed.entry || null;
+    let reason = fired.message || fired.condition || 'alerte';
+    let sl = parsed.sl || 0;
+    let tp = parsed.tp || 0;
+    if (state == null || price == null) {
+      const chart = await this._nearestChartSignal(state);
+      if (state == null) state = chart?.state ?? null;
+      if (price == null) price = chart?.price ?? null;
+    }
     if (price == null) { try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; } }
     if (state == null) { this.status = 'alerte declenchee mais sens indetermine'; return null; }
 
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
-    const signal = await this._buildSignal({ state, price, reason });
+    const signal = await this._buildSignal({ state, price, reason, sl_price: sl, tp_price: tp });
 
     // Securite : ne PAS ouvrir une position nue. Si le SL/TP est introuvable
     // (signal non confirme / repaint), on ignore ce declenchement.
@@ -415,6 +420,22 @@ export class SignalDetector {
     return await this._buildSignal({ state: read.state, price: read.price ?? null, reason: read.reason });
   }
 
+  /** Decode un message d'alerte : { state, entry, sl, tp } (chiffres). */
+  _parseAlertMessage(msg) {
+    const t = String(msg || '');
+    const low = t.toLowerCase();
+    let state = null;
+    const hasBuy = (this.ind.buy_keywords || []).some((k) => low.includes(String(k).toLowerCase()));
+    const hasSell = (this.ind.sell_keywords || []).some((k) => low.includes(String(k).toLowerCase()));
+    if (hasBuy && !hasSell) state = STATE.LONG;
+    else if (hasSell && !hasBuy) state = STATE.SHORT;
+    const grab = (re) => { const m = t.match(re); return m ? parseFloat(m[1]) : 0; };
+    const sl = grab(/\bs\.?\s*l\.?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i) || grab(/\bstop\s*(?:loss)?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+    const tp = grab(/\bt\.?\s*p\.?\s*1?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i) || grab(/\btarget\s*1?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+    const entry = grab(/\bentr[yeé]e?\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i) || grab(/\bentry\s*[:=]?\s*(-?\d+(?:\.\d+)?)/i);
+    return { state, entry, sl, tp };
+  }
+
   /** Construit l'objet signal (action + SL/TP) a partir d'un candidat. */
   async _buildSignal(sig) {
     let action;
@@ -423,7 +444,16 @@ export class SignalDetector {
     else action = 'CLOSE';
 
     let sl_price = 0, tp_price = 0, sl_dist = 0, tp_dist = 0;
-    if (action !== 'CLOSE' && this.sltp?.enabled) {
+    // Si le SL/TP est deja fourni (depuis le message d'alerte) -> on l'utilise.
+    if (action !== 'CLOSE' && (sig.sl_price > 0 || sig.tp_price > 0)) {
+      sl_price = sig.sl_price || 0;
+      tp_price = sig.tp_price || 0;
+      const ep = sig.price;
+      if (ep != null) {
+        if (sl_price > 0) sl_dist = Math.round(Math.abs(ep - sl_price) * 100) / 100;
+        if (tp_price > 0) tp_dist = Math.round(Math.abs(ep - tp_price) * 100) / 100;
+      }
+    } else if (action !== 'CLOSE' && this.sltp?.enabled) {
       let entryPrice = sig.price;
       if (entryPrice == null || entryPrice === 0) {
         try { entryPrice = (await this.data.getQuote({}))?.price ?? null; } catch { entryPrice = null; }
