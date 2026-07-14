@@ -15,6 +15,7 @@
     "start": "node src/server.js",
     "tv": "node src/cli/index.js",
     "bridge": "node src/bridge/run.js",
+    "probe-alerts": "node src/bridge/probe-alerts.js",
     "webhook": "node src/bridge/webhook.js",
     "test": "node --test tests/e2e.test.js tests/pine_analyze.test.js",
     "test:e2e": "node --test tests/e2e.test.js",
