@@ -344,8 +344,16 @@ export class SignalDetector {
 
     if (!fired) { this.status = `${relevant.length} alertes surveillees (aucun declenchement)`; return null; }
 
+    // DIAGNOSTIC : afficher le message BRUT lu, pour verifier la coherence avec MT5.
+    const rawMsg = fired.message || '';
+    const stamp = new Date().toISOString().slice(11, 19);
+    console.log(`[${stamp}] ALERTE DECLENCHEE. Message brut lu par le pont:`);
+    console.log(rawMsg.trim() ? `----\n${rawMsg.trim()}\n----` : '----\n(MESSAGE VIDE — le pont va lire le graphique en secours)\n----');
+
     // On decode le MESSAGE de l'alerte : sens + SL + TP + entree (en chiffres).
-    const parsed = this._parseAlertMessage(fired.message || '');
+    const parsed = this._parseAlertMessage(rawMsg);
+    console.log(`[${stamp}] Decode: sens=${parsed.state || '(aucun)'} entry=${parsed.entry || '-'} SL=${parsed.sl || '-'} TP=${parsed.tp || '-'}`);
+    if (!parsed.state) console.log(`[${stamp}] ATTENTION: aucun BUY/SELL trouve dans le message -> secours graphique (risque d'inversion).`);
     let state = parsed.state;
     // Sens de secours depuis la condition (alertes BUY/SELL separees).
     if (state == null) {
