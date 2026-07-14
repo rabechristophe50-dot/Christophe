@@ -66,6 +66,7 @@ export class SignalDetector {
     this.lastDir = null;     // (mode study_value) dernier sens trade
     this.seenIds = new Set();// ids des labels DEJA affiches (baseline) ou deja tradus
     this.seenSig = new Set();// (mode alert) ids des ENTREES RUGA deja connues/tradees
+    this.seenJournal = new Set();// (mode journal) cles des messages deja vus/tradus
     this.lastKey = null;     // "sens@prix-arrondi" du dernier signal envoye (anti-doublon)
     this.status = 'demarrage...'; // etat lisible pour le suivi en direct
   }
@@ -316,6 +317,7 @@ export class SignalDetector {
   }
 
   async poll() {
+    if ((this.ind.mode || 'label') === 'journal') return this._pollJournal();
     if ((this.ind.mode || 'label') === 'alert') return this._pollAlerts();
     if ((this.ind.mode || 'label') === 'study_value') return this._pollStudyValue();
 
@@ -367,9 +369,77 @@ export class SignalDetector {
   }
 
   /**
-   * Mode ALERTE (le plus fiable) : on surveille les alertes RUGA et on trade
-   * quand une alerte se DECLENCHE (last_fire_time change). Le sens vient du
-   * message de l'alerte (contient "buy" ou "sell").
+   * Mode JOURNAL (le plus FIABLE) : on lit le VRAI message du tir dans le
+   * panneau Alertes -> Journal. Le message contient sens + Entry + SL + TP en
+   * chiffres -> aucune lecture du graphique, aucune inversion possible.
+   * Prerequis : garder le panneau JOURNAL ouvert dans TradingView.
+   */
+  async _pollJournal() {
+    let entries;
+    try { entries = (await this.alerts.journal())?.entries || []; }
+    catch { this.status = 'lecture du journal impossible (TV connecte ? panneau Journal ouvert ?)'; return null; }
+
+    const symWanted = (this.cfg.guard?.symbol || '').toUpperCase();
+    const cleanSym = (s) => (String(s || '').includes(':') ? String(s).split(':').pop() : String(s)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const entryKw = this.ind.entry_keywords || ['entry', 'entrée', 'entree'];
+    const symOf = (msg) => { const m = String(msg).match(/symbol\s*[:=]?\s*([A-Za-z0-9._:]+)/i); return m ? cleanSym(m[1]) : ''; };
+    const keyOf = (e) => `${e.time}|${e.message}`;
+
+    // Un message est-il un vrai signal d'ENTREE tradable ?
+    const isTradable = (e) => {
+      const msg = e.message || '';
+      if (symWanted && !symOf(msg).includes(symWanted)) return false;         // bon symbole
+      if (this.excludeKw.length && matchesAny(msg, this.excludeKw)) return false; // LIMIT...
+      if (!matchesAny(msg, entryKw)) return false;                            // doit etre une ENTREE
+      const hasBuy = matchesAny(msg, this.ind.buy_keywords);
+      const hasSell = matchesAny(msg, this.ind.sell_keywords);
+      return hasBuy !== hasSell;                                             // exactement un sens
+    };
+
+    if (!this.initialized) {
+      this.initialized = true;
+      for (const e of entries) this.seenJournal.add(keyOf(e)); // baseline : ne pas trader l'existant
+      const nb = entries.filter(isTradable).length;
+      this.status = `demarrage (journal) : ${entries.length} entrees ignorees (${nb} signaux), en attente d'un NOUVEAU tir`;
+      return null;
+    }
+
+    // Un nouveau tir apparait EN HAUT du journal. On ne regarde que le haut de
+    // la liste (evite de retrader de vieilles entrees chargees en scrollant).
+    const fresh = entries.slice(0, 12).filter((e) => !this.seenJournal.has(keyOf(e)));
+    for (const e of fresh) if (!isTradable(e)) this.seenJournal.add(keyOf(e)); // marquer les non-signaux
+    const freshSignals = fresh.filter(isTradable);
+    if (!freshSignals.length) { this.status = `journal surveille (aucun nouveau signal)`; return null; }
+
+    // Le plus ANCIEN d'abord (chronologique). entries = du plus recent au plus ancien.
+    const pick = freshSignals[freshSignals.length - 1];
+    this.seenJournal.add(keyOf(pick));
+
+    const parsed = this._parseAlertMessage(pick.message);
+    const stamp = new Date().toISOString().slice(11, 19);
+    console.log(`[${stamp}] JOURNAL — nouveau tir:`);
+    console.log(`----\n${pick.message}\n----`);
+    console.log(`[${stamp}] Decode: sens=${parsed.state || '(aucun)'} entry=${parsed.entry || '-'} SL=${parsed.sl || '-'} TP=${parsed.tp || '-'}`);
+
+    if (parsed.state == null || !parsed.sl || !parsed.tp) {
+      this.status = `tir IGNORE : sens/SL/TP illisibles dans le message`;
+      return null;
+    }
+    const dir = parsed.state === STATE.LONG ? 'BUY' : 'SELL';
+    const signal = await this._buildSignal({ state: parsed.state, price: parsed.entry || null, reason: pick.message, sl_price: parsed.sl, tp_price: parsed.tp });
+    signal.symbol = symOf(pick.message) || (this.cfg.guard?.symbol || null);
+
+    if (this.sltp?.enabled && this.sltp?.require !== false && (!signal.sl_price || !signal.tp_price)) {
+      this.status = `tir ${dir} IGNORE : SL/TP manquant - pas de position nue`;
+      return null;
+    }
+    this.status = `>>> JOURNAL ${dir} (SL=${signal.sl_price} TP=${signal.tp_price}) -> envoye a MT5`;
+    return signal;
+  }
+
+  /**
+   * Mode ALERTE : on surveille les alertes RUGA et on trade quand une alerte se
+   * DECLENCHE (last_fire_time change). Le sens vient du message de l'alerte.
    */
   async _pollAlerts() {
     let list;

@@ -55,7 +55,7 @@ async function main() {
   // alertes TradingView). On desactive donc le garde-fou/re-calibrage/anti-repaint
   // qui se basent sur le graphique affiche : ils bloqueraient a tort de vraies
   // alertes si l'utilisateur regarde un autre symbole/timeframe.
-  const isAlert = cfg.indicator.mode === 'alert';
+  const isAlert = cfg.indicator.mode === 'alert' || cfg.indicator.mode === 'journal';
   console.log(`[bridge] Config: ${cfg._source}`);
   console.log(`[bridge] Mode indicateur: ${cfg.indicator.mode} | filtre: "${cfg.indicator.study_filter || '(tous)'}"`);
   console.log(`[bridge] Ordre: lot=${cfg.order.lot} SL=${cfg.order.sl_points}pts TP=${cfg.order.tp_points}pts`);

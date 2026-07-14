@@ -103,6 +103,37 @@ export async function list() {
   return { success: true, alert_count: result?.alerts?.length || 0, source: 'internal_api', alerts: result?.alerts || [], error: result?.error };
 }
 
+/**
+ * Lit le JOURNAL des alertes declenchees (panneau Alertes -> onglet Journal).
+ * C'est le SEUL endroit ou le vrai message d'un tir « Tout appel de la fonction
+ * alerte() » est visible (« RUGA PRO OLD: BUY ENTRY ... SL ... TP1 ... »).
+ * Retourne les entrees, la plus RECENTE en premier.
+ */
+export async function journal() {
+  const result = await evaluate(`
+    (function() {
+      try {
+        var items = document.querySelectorAll('[class*="itemBody-"]');
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          var msgEl = it.querySelector('[class*="message-"]');
+          if (!msgEl) continue;
+          var msg = (msgEl.innerText || msgEl.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (!msg) continue;
+          var full = (it.innerText || it.textContent || '').trim();
+          var lines = full.split('\\n').map(function(s){ return s.trim(); }).filter(Boolean);
+          var time = lines.length ? lines[lines.length - 1] : '';
+          var symline = lines.length > 1 ? lines[lines.length - 2] : '';
+          out.push({ message: msg, time: time, symline: symline });
+        }
+        return { entries: out };
+      } catch (e) { return { entries: [], error: e.message }; }
+    })()
+  `);
+  return { success: true, entries: result?.entries || [], error: result?.error };
+}
+
 export async function deleteAlerts({ delete_all }) {
   if (delete_all) {
     const result = await evaluate(`

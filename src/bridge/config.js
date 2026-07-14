@@ -14,7 +14,7 @@ const DEFAULTS = {
   default_symbol: 'EURUSD',
   indicator: {
     study_filter: '',
-    mode: 'label',
+    mode: 'journal',
     signal_mode: 'on_new_label',
     buy_keywords: ['buy', 'long'],
     sell_keywords: ['sell', 'short'],
