@@ -65,8 +65,76 @@ export class SignalDetector {
     this.pending = null;     // { state, price, reason, since } en attente de confirmation
     this.lastDir = null;     // (mode study_value) dernier sens trade
     this.seenIds = new Set();// ids des labels DEJA affiches (baseline) ou deja tradus
+    this.seenSig = new Set();// (mode alert) ids des ENTREES RUGA deja connues/tradees
     this.lastKey = null;     // "sens@prix-arrondi" du dernier signal envoye (anti-doublon)
     this.status = 'demarrage...'; // etat lisible pour le suivi en direct
+  }
+
+  /**
+   * Lit les signaux RUGA GROUPES depuis le graphique.
+   * RUGA dessine chaque signal en 3 labels d'id consecutifs :
+   *   id   = "BUY ENTRY" / "SELL ENTRY" (+ variantes "(HIGH CONF)")
+   *   id+1 = "SL"
+   *   id+2 = "TP 1"
+   * On reconstruit {id, state, entry, sl, tp} et on valide la geometrie
+   * (achat : SL<entree<TP ; vente : SL>entree>TP). Source 100% fiable.
+   */
+  async _readGroupedSignals() {
+    const res = await this.data.getPineLabels({ study_filter: this.ind.study_filter, verbose: true, max_labels: 60 });
+    const labels = [];
+    for (const st of res?.studies || []) {
+      for (const lb of st.labels || []) {
+        if (lb.price == null) continue;
+        labels.push({ id: Number(lb.id), text: String(lb.text || ''), price: lb.price });
+      }
+    }
+    const byId = new Map(labels.map((l) => [l.id, l]));
+    // Trouve, apres une entree, le 1er label SL puis TP dans les id qui suivent.
+    const findAfter = (entryId, kw) => {
+      for (let d = 1; d <= 3; d++) {
+        const l = byId.get(entryId + d);
+        if (l && matchesAny(l.text, kw)) return l.price;
+      }
+      return 0;
+    };
+    const out = [];
+    for (const l of labels) {
+      const t = l.text.toLowerCase();
+      if (!t.includes('entry') && !t.includes('entr')) continue; // doit etre une ENTREE
+      if (this.excludeKw.length && matchesAny(l.text, this.excludeKw)) continue; // ex. LIMIT
+      let state = null;
+      if (matchesAny(l.text, this.ind.buy_keywords)) state = STATE.LONG;
+      else if (matchesAny(l.text, this.ind.sell_keywords)) state = STATE.SHORT;
+      if (state == null) continue;
+      const sl = findAfter(l.id, this.sltp?.sl_keywords || ['sl', 'stop']);
+      const tp = findAfter(l.id, this.sltp?.tp_keywords || ['tp', 'target']);
+      // Validation geometrique : evite un mauvais appariement SL/TP.
+      const okGeom = state === STATE.LONG
+        ? (sl > 0 && tp > 0 && sl < l.price && tp > l.price)
+        : (sl > 0 && tp > 0 && sl > l.price && tp < l.price);
+      out.push({ id: l.id, state, entry: l.price, sl, tp, text: l.text, okGeom });
+    }
+    return out;
+  }
+
+  /**
+   * Signal RUGA le plus RECENT et NOUVEAU (id jamais vu), avec SL/TP valides.
+   * Reessaie quelques fois : RUGA met un court instant a dessiner les labels.
+   */
+  async _newestChartSignal() {
+    const tries = Math.max(1, this.sltp?.read_tries || 3);
+    for (let i = 0; i < tries; i++) {
+      let sigs = [];
+      try { sigs = await this._readGroupedSignals(); } catch { sigs = []; }
+      const fresh = sigs.filter((s) => !this.seenSig.has(s.id) && s.okGeom);
+      if (fresh.length) {
+        fresh.sort((a, b) => b.id - a.id); // le plus recent = id le plus grand
+        for (const s of fresh) this.seenSig.add(s.id); // ne pas re-trader les autres
+        return fresh[0];
+      }
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 600));
+    }
+    return null;
   }
 
   /** Enregistre TOUS les signaux d'entree actuels comme "deja connus" (baseline). */
@@ -332,7 +400,9 @@ export class SignalDetector {
     if (!this.initialized) {
       this.initialized = true;
       for (const a of relevant) this.fireTimes[a.alert_id] = fireNum(a.last_fired);
-      this.status = `demarrage : ${relevant.length} alertes RUGA surveillees, en attente d'un declenchement`;
+      // Baseline : memoriser les signaux RUGA DEJA affiches -> on ne les trade pas.
+      try { for (const s of await this._readGroupedSignals()) this.seenSig.add(s.id); } catch { /* ignore */ }
+      this.status = `demarrage : ${relevant.length} alertes surveillees, ${this.seenSig.size} signaux deja affiches ignores, en attente d'un declenchement`;
       return null;
     }
 
@@ -372,25 +442,28 @@ export class SignalDetector {
         return null;
       }
     }
+    // 1) On tente le MESSAGE (souvent VIDE pour "Tout appel de la fonction alerte()").
     let state = parsed.state;
-    // Sens de secours depuis la condition (alertes BUY/SELL separees).
-    if (state == null) {
-      const c = `${fired.condition || ''}`;
-      const cb = matchesAny(c, this.ind.buy_keywords), cs = matchesAny(c, this.ind.sell_keywords);
-      if (cb && !cs) state = STATE.LONG; else if (cs && !cb) state = STATE.SHORT;
-    }
-
-    // Entree : celle du message si presente, sinon le niveau RUGA sur le graphique.
     let price = parsed.entry || null;
-    let reason = fired.message || fired.condition || 'alerte';
     let sl = parsed.sl || 0;
     let tp = parsed.tp || 0;
-    if (state == null || price == null) {
-      const chart = await this._nearestChartSignal(state);
-      if (state == null) state = chart?.state ?? null;
-      if (price == null) price = chart?.price ?? null;
+    let reason = rawMsg.trim() || fired.condition || 'alerte';
+
+    // 2) Message incomplet -> on lit le GRAPHIQUE : signal RUGA le plus RECENT et
+    //    NOUVEAU (labels groupes ENTRY/SL/TP par id consecutifs). Source fiable.
+    if (!(state && price && sl > 0 && tp > 0)) {
+      const g = await this._newestChartSignal();
+      if (g) {
+        state = g.state; price = g.entry; sl = g.sl; tp = g.tp;
+        reason = `${g.text} @${g.entry}`;
+        const gd = g.state === STATE.LONG ? 'BUY' : 'SELL';
+        console.log(`[${stamp}] Graphique: ${gd} entry=${g.entry} SL=${g.sl} TP=${g.tp} (id ${g.id})`);
+      } else {
+        this.status = `alerte declenchee mais aucun NOUVEAU signal RUGA sur le graphique (TF affiche ? deja trade ?)`;
+        return null;
+      }
     }
-    if (price == null) { try { price = (await this.data.getQuote({}))?.price ?? null; } catch { price = null; } }
+
     if (state == null) { this.status = 'alerte declenchee mais sens indetermine'; return null; }
 
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
