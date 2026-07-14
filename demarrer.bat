@@ -41,8 +41,20 @@ goto wait
 
 :ready
 echo.
-echo    *** TradingView pret ! Ouvre ton graphique XAUUSD + RUGA ***
+echo    *** TradingView est pret ! ***
 echo.
+echo    AVANT DE LANCER LE PONT, prepare TradingView :
+echo      1) Graphique sur XAUUSD, timeframe M15, indicateur RUGA visible
+echo      2) Ouvre le panneau ALERTES (icone cloche a droite)
+echo         puis l'onglet JOURNAL, et LAISSE-LE OUVERT
+echo      3) Verifie que tes 2 alertes RUGA sont ACTIVES
+echo      4) MetaTrader 5 ouvert : EA sur XAUUSD + bouton "Algo Trading" VERT
+echo.
+echo    (L'ordre est important : le pont ignore les tirs deja affiches au
+echo     demarrage, donc ouvre le JOURNAL AVANT d'appuyer sur une touche.)
+echo.
+echo    Quand TOUT est pret, appuie sur une touche pour DEMARRER LE PONT...
+pause >nul
 
 REM --- Lancer le pont ---
 cd /d "%PROJ%"
