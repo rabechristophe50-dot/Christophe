@@ -21,6 +21,8 @@
     "flat_keywords": ["close", "exit", "flat", "tp hit", "sl hit"],
     "_comment_exclude": "Labels JAMAIS traites comme entree, meme s'ils contiennent buy/sell (ex. 'BUY LIMIT' = ordre en attente).",
     "exclude_keywords": ["limit"],
+    "_comment_entry": "Mode 'alert' : on ne trade QUE les messages contenant un de ces mots (vraie ENTREE). Les autres alert() de RUGA (TP HIT, SL HIT, EXIT...) sont ignores pour eviter les faux trades.",
+    "entry_keywords": ["entry", "entrée", "entree"],
     "_comment_max_entry": "Anti-repaint : ignore un signal dont le label est a plus de X% du prix actuel (vieux label redessine). 0 = desactive.",
     "max_entry_pct": 0.5,
     "_comment_confirm": "0 = entree IMMEDIATE des qu'un nouveau signal s'affiche. Mets >0 (ex. 60) seulement si tu veux attendre que le signal persiste (anti-repaint).",

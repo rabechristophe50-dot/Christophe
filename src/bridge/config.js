@@ -20,6 +20,9 @@ const DEFAULTS = {
     sell_keywords: ['sell', 'short'],
     flat_keywords: ['close', 'exit', 'flat'],
     exclude_keywords: ['limit'],
+    // Mode 'alert' : ne trader QUE les messages contenant un de ces mots (vraie
+    // entree). Les autres alert() de RUGA (TP HIT, SL HIT, EXIT...) sont ignores.
+    entry_keywords: ['entry', 'entrée', 'entree'],
     max_entry_pct: 0.5,
     confirm_seconds: 0,
     study_value: { field: 'Signal', long_when: '> 0', short_when: '< 0', flat_when: '== 0' },

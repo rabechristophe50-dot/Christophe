@@ -354,6 +354,22 @@ export class SignalDetector {
     const parsed = this._parseAlertMessage(rawMsg);
     console.log(`[${stamp}] Decode: sens=${parsed.state || '(aucun)'} entry=${parsed.entry || '-'} SL=${parsed.sl || '-'} TP=${parsed.tp || '-'}`);
     if (!parsed.state) console.log(`[${stamp}] ATTENTION: aucun BUY/SELL trouve dans le message -> secours graphique (risque d'inversion).`);
+
+    // Ne trader QUE les vrais messages d'ENTREE. La condition "Tout appel de la
+    // fonction alerte()" fait tirer CHAQUE alert() de RUGA (TP HIT, SL HIT, EXIT,
+    // LIMIT...). On ignore tout ce qui n'est pas une entree pour eviter les faux
+    // trades (ex. "BUY TP1 HIT" contient "buy" mais n'est PAS une entree).
+    if (rawMsg.trim()) {
+      if (this.excludeKw.length && matchesAny(rawMsg, this.excludeKw)) {
+        this.status = `alerte IGNOREE : ordre en attente/exclu (mot: ${this.excludeKw.join(',')})`;
+        return null;
+      }
+      const entryKw = this.ind.entry_keywords || ['entry', 'entrée', 'entree'];
+      if (!matchesAny(rawMsg, entryKw)) {
+        this.status = `alerte IGNOREE : pas un signal d'ENTREE (sortie / TP-SL hit / notif ?)`;
+        return null;
+      }
+    }
     let state = parsed.state;
     // Sens de secours depuis la condition (alertes BUY/SELL separees).
     if (state == null) {
