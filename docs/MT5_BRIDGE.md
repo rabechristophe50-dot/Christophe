@@ -186,23 +186,6 @@ n'est pas sur le bon réglage — protection contre un changement accidentel.
   par le simple passage M5 ↔ M15.
 - Le timeframe de MT5 n'a aucun rôle : toute la décision vient de TradingView.
 
-## Miroir visuel (afficher l'indicateur sur MT5)
-
-Le code Pine étant verrouillé, on ne peut pas recréer l'indicateur en MQL5. En
-revanche, le pont recopie ce qu'il **dessine** — lignes horizontales, niveaux
-SL/TP, labels BUY/SELL — dans un fichier `tv_draw.txt`, et l'EA les **redessine
-sur le graphique MT5** (rafraîchi toutes les ~5 s).
-
-- Côté pont : section `drawings` de la config (`enabled`, `refresh_ms`,
-  `max_labels`). `file_path` vide = même dossier que le signal.
-- Côté EA : `InpShowDrawings = true`, `InpDrawFile = tv_draw.txt`.
-- Code couleur MT5 : SL en rouge, TP en vert, BUY en bleu, SELL en orange, le
-  reste en gris.
-
-⚠️ C'est un **affichage** des niveaux, pas l'indicateur lui-même. Les prix
-s'alignent car TradingView et MT5 sont sur le même symbole (XAUUSD). Les objets
-portent le préfixe `TVD_` et sont nettoyés quand tu retires l'EA.
-
 ## Protection du capital (réglages EA)
 
 Pour le trading réel, l'EA expose des garde-fous (tous optionnels, désactivés

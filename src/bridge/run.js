@@ -7,11 +7,9 @@
  * Boucle : lit le graphique via CDP, detecte les changements de signal de
  * l'indicateur, et publie un ordre (fichier + HTTP) que l'EA MT5 execute.
  */
-import { dirname, join } from 'path';
 import { loadConfig } from './config.js';
 import { SignalDetector } from './detector.js';
-import { SignalSink, writeTextAtomic } from './sink.js';
-import { collectDrawings } from './drawings.js';
+import { SignalSink } from './sink.js';
 import { data, chart } from '../core/index.js';
 
 function cleanSymbol(tvSymbol) {
@@ -53,6 +51,11 @@ function guardCheck(guard, symbol, resolution) {
 
 async function main() {
   const cfg = loadConfig(process.argv[2]);
+  // En mode ALERTE, le signal ne depend PAS du graphique affiche (il vient des
+  // alertes TradingView). On desactive donc le garde-fou/re-calibrage/anti-repaint
+  // qui se basent sur le graphique affiche : ils bloqueraient a tort de vraies
+  // alertes si l'utilisateur regarde un autre symbole/timeframe.
+  const isAlert = cfg.indicator.mode === 'alert';
   console.log(`[bridge] Config: ${cfg._source}`);
   console.log(`[bridge] Mode indicateur: ${cfg.indicator.mode} | filtre: "${cfg.indicator.study_filter || '(tous)'}"`);
   console.log(`[bridge] Ordre: lot=${cfg.order.lot} SL=${cfg.order.sl_points}pts TP=${cfg.order.tp_points}pts`);
@@ -69,13 +72,6 @@ async function main() {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 
-  // Miroir visuel : ecrit periodiquement les dessins de l'indicateur dans un
-  // fichier texte que l'EA MT5 redessine sur son graphique.
-  const drawCfg = cfg.drawings || {};
-  const drawPath = drawCfg.file_path || join(dirname(cfg.sink.file_path), 'tv_draw.txt');
-  if (drawCfg.enabled) console.log(`[bridge] Miroir visuel: ${drawPath}`);
-  let lastDraw = 0;
-
   // Garde-fou : ne trader que le bon symbole + timeframes autorises (M5/M15).
   const guard = cfg.guard || {};
   if (guard.enabled) {
@@ -90,8 +86,9 @@ async function main() {
     try {
       const { symbol: tvSym, resolution: tvRes } = await currentChart();
 
-      // Changement de timeframe -> re-caler le detecteur sans trader le passage.
-      if (tvRes !== null && tvRes !== lastRes) {
+      // Changement de timeframe -> re-caler le detecteur (mode label/study_value
+      // seulement). En mode alerte, le graphique affiche n'a aucune importance.
+      if (!isAlert && tvRes !== null && tvRes !== lastRes) {
         if (lastRes !== null) {
           detector.initialized = false;
           console.log(`[bridge] Timeframe change: ${lastRes} -> ${tvRes} (re-calibrage, aucun trade sur le changement)`);
@@ -109,35 +106,20 @@ async function main() {
         console.log(`[${stamp}] etat: ${detector.status}`);
       }
 
-      if (drawCfg.enabled && t0 - lastDraw >= (drawCfg.refresh_ms || 3000)) {
-        lastDraw = t0;
-        try {
-          const text = await collectDrawings({
-            study_filter: cfg.indicator.study_filter,
-            max_labels: drawCfg.max_labels,
-            mode: drawCfg.mode || 'active',
-            buy_keywords: cfg.indicator.buy_keywords,
-            sell_keywords: cfg.indicator.sell_keywords,
-            exclude_keywords: cfg.indicator.exclude_keywords,
-            sl_keywords: cfg.sltp?.sl_keywords,
-            tp_keywords: cfg.sltp?.tp_keywords,
-            show_boxes: drawCfg.show_boxes,
-            max_boxes: drawCfg.max_boxes,
-          }, { data });
-          writeTextAtomic(drawPath, text);
-        } catch (e) { /* miroir optionnel : on n'interrompt pas le trading */ }
-      }
       if (signal) {
-        // Garde-fou : refuser si TV n'est pas sur le bon symbole / timeframe.
-        const g = guardCheck(guard, tvSym, tvRes);
+        // Garde-fou symbole. En mode alerte, on valide le symbole de L'ALERTE
+        // (deja filtre par le detecteur) ; sinon le symbole du graphique affiche.
+        const guardSym = isAlert ? (signal.symbol || tvSym) : tvSym;
+        const g = guardCheck(guard, guardSym, isAlert ? null : tvRes);
         if (!g.ok) {
           const stamp = new Date().toISOString().slice(11, 19);
           console.warn(`[${stamp}] SIGNAL IGNORE (${signal.action}) : ${g.reason}`);
           continue;
         }
-        // Anti-repaint : un vrai signal est proche du prix actuel. Un vieux label
-        // redessine est loin -> on le rejette.
-        const maxPct = cfg.indicator.max_entry_pct;
+        // Anti-repaint (mode label uniquement) : un vieux label redessine est
+        // loin du prix -> on le rejette. En mode alerte, le declenchement fait
+        // foi : on ne rejette jamais sur la distance de prix.
+        const maxPct = isAlert ? 0 : cfg.indicator.max_entry_pct;
         if (maxPct > 0 && signal.price != null) {
           let cur = null;
           try { cur = (await data.getQuote({}))?.price ?? null; } catch { cur = null; }
@@ -153,7 +135,8 @@ async function main() {
             }
           }
         }
-        const mtSym = mapSymbol(cfg, tvSym);
+        // En mode alerte : symbole de l'alerte. Sinon : symbole du graphique.
+        const mtSym = mapSymbol(cfg, (isAlert && signal.symbol) ? signal.symbol : tvSym);
         const published = sink.publish({
           action: signal.action,
           symbol: mtSym,

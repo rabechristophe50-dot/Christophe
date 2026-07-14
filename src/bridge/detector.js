@@ -314,14 +314,16 @@ export class SignalDetector {
       const n = Date.parse(v);
       return Number.isNaN(n) ? Number(v) || 0 : n;
     };
-    // Une alerte est retenue si : elle est sur le bon SYMBOLE (XAUUSD), OU son
-    // texte parle de buy/sell/signal/RUGA. (Le symbole capte les alertes RUGA
-    // meme quand message/condition ne contiennent pas de mot-cle.)
+    // Une alerte est retenue si elle est sur le bon SYMBOLE (ex. XAUUSD). Si
+    // aucun symbole n'est impose (guard vide), on retombe sur les mots-cles.
+    // IMPORTANT : quand un symbole est impose, il est OBLIGATOIRE -> on ne
+    // tradera JAMAIS une alerte d'un autre symbole (evite un trade sur le
+    // mauvais instrument).
     const kws = [...(this.ind.buy_keywords || []), ...(this.ind.sell_keywords || []), 'signal', 'alert', this.ind.study_filter || ''].filter(Boolean);
-    const cleanSym = (s) => { const x = String(s || ''); return (x.includes(':') ? x.split(':').pop() : x).toUpperCase(); };
+    const cleanSym = (s) => { const x = String(s || ''); return (x.includes(':') ? x.split(':').pop() : x).toUpperCase().replace(/[^A-Z0-9]/g, ''); };
     const symWanted = (this.cfg.guard?.symbol || '').toUpperCase();
     const isSignalAlert = (a) => {
-      if (symWanted && cleanSym(a.symbol).includes(symWanted)) return true;
+      if (symWanted) return cleanSym(a.symbol).includes(symWanted);
       const txt = `${a.message || ''} ${a.condition || ''}`;
       return kws.some((k) => matchesAny(txt, [k]));
     };
@@ -393,6 +395,8 @@ export class SignalDetector {
 
     const dir = state === STATE.LONG ? 'BUY' : 'SELL';
     const signal = await this._buildSignal({ state, price, reason, sl_price: sl, tp_price: tp });
+    // Le trade doit partir sur le symbole de L'ALERTE, pas du graphique affiche.
+    signal.symbol = cleanSym(fired.symbol) || null;
 
     // Securite : ne PAS ouvrir une position nue. Si le SL/TP est introuvable
     // (signal non confirme / repaint), on ignore ce declenchement.

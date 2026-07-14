@@ -17,14 +17,10 @@ input string InpFileName     = "tv_signal.json"; // fichier signal (dossier Comm
 input double InpLot          = 0.01;             // lot par position (si le signal n'en donne pas)
 input long   InpMagic        = 88112277;         // magic number
 input int    InpSlippage     = 20;               // deviation max en points
-input bool   InpShowDrawings = true;             // afficher les lignes/labels de RUGA sur MT5
-input string InpDrawFile     = "tv_draw.txt";    // fichier des dessins (dossier Common\Files)
 
 //--- Global --------------------------------------------------------
 CTrade   trade;
 long     g_lastId  = -1;   // dernier id de signal traite
-int      g_drawTick = 0;
-#define DRAW_PREFIX "TVD_"
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -49,7 +45,6 @@ int OnInit()
 void OnDeinit(const int reason)
   {
    EventKillTimer();
-   ObjectsDeleteAll(0, DRAW_PREFIX);
   }
 
 //+------------------------------------------------------------------+
@@ -57,9 +52,6 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
   {
-   if(InpShowDrawings && (++g_drawTick % 5 == 0))
-      RenderDrawings();
-
    string json = ReadCommonFile(InpFileName);
    if(json == "") return;
 
@@ -137,66 +129,6 @@ double NormalizeLot(string symbol, double lot)
    if(lot < minLot) lot = minLot;
    if(lot > maxLot) lot = maxLot;
    return lot;
-  }
-
-//+------------------------------------------------------------------+
-//| Miroir visuel (lignes / labels / boites de RUGA)                 |
-//+------------------------------------------------------------------+
-color ColorForText(string text)
-  {
-   string t = text; StringToLower(t);
-   if(StringFind(t, "sl") >= 0)   return clrTomato;
-   if(StringFind(t, "tp") >= 0)   return clrLimeGreen;
-   if(StringFind(t, "buy") >= 0)  return clrDodgerBlue;
-   if(StringFind(t, "sell") >= 0) return clrOrange;
-   return clrSilver;
-  }
-
-void RenderDrawings()
-  {
-   string content = ReadCommonFile(InpDrawFile);
-   if(content == "") return;
-   StringReplace(content, "\r", "");
-   ObjectsDeleteAll(0, DRAW_PREFIX);
-
-   string lines[];
-   int n = StringSplit(content, (ushort)'\n', lines);
-   datetime anchor = TimeCurrent();
-   int idx = 0;
-   for(int i = 0; i < n; i++)
-     {
-      string p[];
-      int k = StringSplit(lines[i], (ushort)'|', p);
-      if(k < 2) continue;
-      if(p[0] == "L")
-        {
-         double price = StringToDouble(p[1]); if(price <= 0) continue;
-         string name = DRAW_PREFIX + "L" + IntegerToString(idx++);
-         if(ObjectCreate(0, name, OBJ_HLINE, 0, 0, price))
-           { ObjectSetInteger(0,name,OBJPROP_COLOR,clrDimGray); ObjectSetInteger(0,name,OBJPROP_STYLE,STYLE_DOT);
-             ObjectSetInteger(0,name,OBJPROP_BACK,true); ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false); }
-        }
-      else if(p[0] == "B" && k >= 3)
-        {
-         double hi = StringToDouble(p[1]); double lo = StringToDouble(p[2]); if(hi<=0||lo<=0) continue;
-         datetime t1 = anchor - 400*PeriodSeconds(); datetime t2 = anchor + 30*PeriodSeconds();
-         string name = DRAW_PREFIX + "B" + IntegerToString(idx++);
-         if(ObjectCreate(0, name, OBJ_RECTANGLE, 0, t1, hi, t2, lo))
-           { ObjectSetInteger(0,name,OBJPROP_COLOR,clrSlateGray); ObjectSetInteger(0,name,OBJPROP_FILL,true);
-             ObjectSetInteger(0,name,OBJPROP_BACK,true); ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false); }
-        }
-      else if(p[0] == "T" && k >= 3)
-        {
-         double price = StringToDouble(p[1]); if(price <= 0) continue;
-         color c = ColorForText(p[2]);
-         string name = DRAW_PREFIX + "T" + IntegerToString(idx++);
-         if(ObjectCreate(0, name, OBJ_TEXT, 0, anchor, price))
-           { ObjectSetString(0,name,OBJPROP_TEXT," "+p[2]); ObjectSetInteger(0,name,OBJPROP_COLOR,c);
-             ObjectSetInteger(0,name,OBJPROP_FONTSIZE,8); ObjectSetInteger(0,name,OBJPROP_ANCHOR,ANCHOR_RIGHT);
-             ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false); }
-        }
-     }
-   ChartRedraw(0);
   }
 
 //+------------------------------------------------------------------+
