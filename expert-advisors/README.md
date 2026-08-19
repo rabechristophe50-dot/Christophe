@@ -95,6 +95,27 @@ est votre meilleur ami pour ne trader que quand ça bouge vraiment.
 > Sur M1, backtestez **impérativement** en mode « chaque tick basé sur les
 > vrais ticks » — sinon le résultat est faux.
 
+### ⏱️ Variante M3 (souvent meilleure que M1)
+
+MT5 gère nativement la période **M3** (`PERIOD_M3`) ; sur TradingView, tapez
+`3`. En M3, les bougies ont plus d'amplitude → le **spread pèse moins** dans le
+stop et il y a **moins de bruit**. C'est en général un meilleur compromis pour
+un bot. Ajustements par rapport aux réglages M1 ci-dessus :
+
+| Paramètre | 🥇 OR (M3) | ₿ BTC (M3) |
+|---|---|---|
+| EMA rapide / lente | **14 / 50** | **14 / 50** |
+| ATR / Stop (× ATR) | 14 / **1.8** | 14 / **2.0** |
+| R:R | **2.0** | **2.0** |
+| Risque par trade | 0.5 % | 0.5 % |
+| Filtre volatilité (ATR % min) | 0.05 | 0.10 |
+| Filtre horaire | ON (13–17) | OFF |
+| Trailing ATR | ON (× 1.8) | ON (× 2.0) |
+
+En M3 on peut viser un **R:R 2.0** : les signaux sont plus propres, donc on
+laisse courir davantage. Refaites le **test du spread** (§5) — il passe presque
+toujours mieux qu'en M1.
+
 ---
 
 ## 5. Sécurité — à lire absolument
