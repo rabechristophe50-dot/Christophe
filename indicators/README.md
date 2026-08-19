@@ -1,11 +1,17 @@
 # Indicateurs Pine Script
 
-Stratégie de confluence combinant **Sweep de liquidité + IFVG + Cassure de trendline**.
-
 | Fichier | Type | Usage |
 |---|---|---|
 | `liquidity_sweep_ifvg_trendline.pine` | `indicator()` | Détection visuelle + labels + tableau + alertes LONG/SHORT |
 | `liquidity_sweep_ifvg_trendline_strategy.pine` | `strategy()` | Version backtestable avec entrées/sorties, SL/TP, statistiques |
+| `adaptive_trend_risk_strategy.pine` | `strategy()` | Bot suivi de tendance + moteur de risque (dimensionnement par % risque, stop ATR, break-even, trailing). Voir `BACKTEST_GUIDE.md` |
+
+> ⚠️ **Aucun bot n'est garanti rentable.** Avant tout usage réel, lis
+> [`BACKTEST_GUIDE.md`](BACKTEST_GUIDE.md) : comment backtester honnêtement,
+> quels chiffres regarder (Profit Factor, Max Drawdown, nombre de trades) et
+> comment éviter l'overfitting.
+
+## Stratégie de confluence (Sweep + IFVG + Trendline)
 
 ## Logique de confluence
 

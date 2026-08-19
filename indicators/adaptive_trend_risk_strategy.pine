@@ -1,0 +1,186 @@
+//@version=6
+// =============================================================================
+//  Adaptive Trend + Risk Engine — STRATEGY (backtestable)
+// -----------------------------------------------------------------------------
+//  Objectif : une base de bot ROBUSTE, pas une promesse de gains.
+//  La logique d'entrée est volontairement simple et éprouvée (suivi de tendance
+//  avec entrée sur repli), parce que la vraie valeur d'un bot rentable vient de
+//  la GESTION DU RISQUE, pas d'un signal magique.
+//
+//  Entrée LONG  : tendance haussière (EMA rapide > EMA lente, pente positive)
+//                 + repli sur l'EMA rapide + clôture de rejet haussier.
+//  Entrée SHORT : symétrique (tendance baissière).
+//
+//  Gestion du risque (le coeur du bot) :
+//    - Dimensionnement par % du capital risqué par trade (position sizing).
+//    - Stop Loss basé sur l'ATR (distance adaptée à la volatilité).
+//    - Take Profit en multiple du risque (R:R configurable).
+//    - Break-even automatique à +1R.
+//    - Trailing stop ATR optionnel pour laisser courir les gains.
+//    - Filtres : régime de volatilité, plage horaire, tendance long terme.
+//
+//  ⚠️  AUCUNE stratégie n'est garantie rentable. Backteste-la, regarde le
+//      Profit Factor, le Max Drawdown et le nombre de trades AVANT tout usage.
+//      Voir indicators/BACKTEST_GUIDE.md
+// =============================================================================
+
+strategy("Adaptive Trend + Risk Engine", shorttitle="ATR-Engine", overlay=true,
+     initial_capital=10000,
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100,
+     commission_type=strategy.commission.percent, commission_value=0.04,
+     slippage=2, calc_on_every_tick=false, process_orders_on_close=true,
+     max_lines_count=100, max_labels_count=100)
+
+// ------------------------------ INPUTS ---------------------------------------
+grpTrend = "① Tendance"
+emaFastLen = input.int(21,  "EMA rapide",  minval=1, group=grpTrend)
+emaSlowLen = input.int(55,  "EMA lente",   minval=1, group=grpTrend)
+slopeLen   = input.int(5,   "Bougies pour la pente EMA", minval=1, group=grpTrend)
+
+grpEntry = "② Entrée sur repli"
+pullbackAtr = input.float(0.5, "Repli max sur EMA rapide (× ATR)", minval=0.0, step=0.1, group=grpEntry)
+requireReject = input.bool(true, "Exiger une bougie de rejet (clôture dans le sens)", group=grpEntry)
+
+grpRisk = "③ Gestion du risque"
+riskPerTrade = input.float(1.0, "Risque par trade (% du capital)", minval=0.05, maxval=10, step=0.05, group=grpRisk)
+atrLen       = input.int(14,  "Longueur ATR", minval=1, group=grpRisk)
+atrMult      = input.float(2.0, "Stop Loss = ATR ×", minval=0.1, step=0.1, group=grpRisk)
+rr           = input.float(2.0, "Ratio Risque:Récompense (TP)", minval=0.1, step=0.1, group=grpRisk)
+useBE        = input.bool(true, "Break-even à +1R", group=grpRisk)
+useTrail     = input.bool(true, "Trailing stop ATR après +1R", group=grpRisk)
+trailMult    = input.float(2.0, "Trailing = ATR ×", minval=0.1, step=0.1, group=grpRisk)
+
+grpFilt = "④ Filtres"
+useVolFilter = input.bool(true,  "Filtre régime de volatilité", group=grpFilt)
+volFloor     = input.float(0.3,  "ATR min (% du prix)", minval=0.0, step=0.05, group=grpFilt)
+useHtf       = input.bool(false, "Filtre tendance HTF (EMA 200)", group=grpFilt)
+htfEmaLen    = input.int(200,   "EMA long terme", minval=1, group=grpFilt)
+useSession   = input.bool(false, "Filtre plage horaire", group=grpFilt)
+sessTime     = input.session("0800-1600", "Plage", group=grpFilt)
+allowLong    = input.bool(true,  "Autoriser les LONG", group=grpFilt)
+allowShort   = input.bool(true,  "Autoriser les SHORT", group=grpFilt)
+
+grpStyle = "⑤ Style"
+cBull = input.color(color.new(#26a69a, 0), "Haussier", group=grpStyle)
+cBear = input.color(color.new(#ef5350, 0), "Baissier", group=grpStyle)
+
+// ------------------------------ CALCULS --------------------------------------
+atr      = ta.atr(atrLen)
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+htfEma   = ta.ema(close, htfEmaLen)
+
+// Pente de l'EMA rapide sur `slopeLen` bougies
+emaSlope = emaFast - emaFast[slopeLen]
+
+// Régime : tendance établie quand les EMA sont ordonnées + pente dans le sens
+trendUp   = emaFast > emaSlow and emaSlope > 0
+trendDn   = emaFast < emaSlow and emaSlope < 0
+
+// Repli : le prix est revenu proche de l'EMA rapide
+nearFast  = math.abs(low - emaFast)  <= atr * pullbackAtr or math.abs(high - emaFast) <= atr * pullbackAtr
+touchedUp = low  <= emaFast + atr * pullbackAtr
+touchedDn = high >= emaFast - atr * pullbackAtr
+
+// Bougie de rejet (clôture dans le sens de la tendance)
+rejUp = not requireReject or (close > open and close > emaFast)
+rejDn = not requireReject or (close < open and close < emaFast)
+
+// Filtres
+atrPct    = close != 0 ? atr / close * 100 : 0.0
+volOk     = not useVolFilter or atrPct >= volFloor
+htfLongOk = not useHtf or close > htfEma
+htfShortOk= not useHtf or close < htfEma
+inSession = not useSession or not na(time(timeframe.period, sessTime))
+filtersOk = volOk and inSession
+
+// ------------------------------ SIGNAUX --------------------------------------
+flat = strategy.position_size == 0
+
+longSignal  = allowLong  and trendUp and touchedUp and rejUp and htfLongOk  and filtersOk and flat
+shortSignal = allowShort and trendDn and touchedDn and rejDn and htfShortOk and filtersOk and flat
+
+// -------------------- DIMENSIONNEMENT PAR RISQUE -----------------------------
+// Quantité telle que (distance de stop × qty) = riskPerTrade % du capital.
+f_qtyByRisk(float stopDist) =>
+    riskCapital = strategy.equity * (riskPerTrade / 100.0)
+    stopDist > 0 ? riskCapital / stopDist : na
+
+// ------------------------------ ÉTAT DU TRADE --------------------------------
+var float entryPrice = na
+var float stopPrice  = na
+var float tpPrice    = na
+var bool  beMoved    = false
+
+// ------------------------------ ENTRÉES --------------------------------------
+if longSignal
+    entryPrice := close
+    stopPrice  := close - atr * atrMult
+    risk       = entryPrice - stopPrice
+    tpPrice    := entryPrice + risk * rr
+    beMoved    := false
+    qty        = f_qtyByRisk(risk)
+    if not na(qty) and qty > 0
+        strategy.entry("LONG", strategy.long, qty=qty)
+
+if shortSignal
+    entryPrice := close
+    stopPrice  := close + atr * atrMult
+    risk       = stopPrice - entryPrice
+    tpPrice    := entryPrice - risk * rr
+    beMoved    := false
+    qty        = f_qtyByRisk(risk)
+    if not na(qty) and qty > 0
+        strategy.entry("SHORT", strategy.short, qty=qty)
+
+// -------------------- GESTION EN COURS DE TRADE ------------------------------
+oneR = na(entryPrice) or na(stopPrice) ? na : math.abs(entryPrice - stopPrice)
+
+if strategy.position_size > 0 and not na(oneR)
+    // Break-even à +1R
+    if useBE and not beMoved and high >= entryPrice + oneR
+        stopPrice := math.max(stopPrice, entryPrice)
+        beMoved   := true
+    // Trailing ATR après +1R
+    if useTrail and beMoved
+        stopPrice := math.max(stopPrice, close - atr * trailMult)
+
+if strategy.position_size < 0 and not na(oneR)
+    if useBE and not beMoved and low <= entryPrice - oneR
+        stopPrice := math.min(stopPrice, entryPrice)
+        beMoved   := true
+    if useTrail and beMoved
+        stopPrice := math.min(stopPrice, close + atr * trailMult)
+
+// ------------------------------ SORTIES --------------------------------------
+if strategy.position_size > 0
+    strategy.exit("Exit L", from_entry="LONG", stop=stopPrice, limit=tpPrice)
+if strategy.position_size < 0
+    strategy.exit("Exit S", from_entry="SHORT", stop=stopPrice, limit=tpPrice)
+
+// ------------------------------ VISUEL ---------------------------------------
+plot(emaFast, "EMA rapide", color=color.new(color.orange, 0))
+plot(emaSlow, "EMA lente",  color=color.new(color.blue, 30))
+plot(useHtf ? htfEma : na, "EMA HTF", color=color.new(color.gray, 40))
+
+plotshape(longSignal,  title="Entrée LONG",  style=shape.triangleup,   location=location.belowbar, color=cBull, size=size.small, text="L")
+plotshape(shortSignal, title="Entrée SHORT", style=shape.triangledown, location=location.abovebar, color=cBear, size=size.small, text="S")
+
+plot(strategy.position_size != 0 ? stopPrice : na, "SL", color=color.new(color.red, 0),   style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tpPrice  : na, "TP", color=color.new(color.green, 0),  style=plot.style_linebr)
+
+// ------------------------------ TABLEAU LIVE ---------------------------------
+var table stats = table.new(position.top_right, 2, 5, border_width=1)
+if barstate.islast
+    pf = strategy.grossloss != 0 ? strategy.grossprofit / strategy.grossloss : na
+    wr = strategy.closedtrades > 0 ? strategy.wintrades / strategy.closedtrades * 100 : na
+    table.cell(stats, 0, 0, "Métrique", bgcolor=color.new(color.gray, 0), text_color=color.white)
+    table.cell(stats, 1, 0, "Valeur",   bgcolor=color.new(color.gray, 0), text_color=color.white)
+    table.cell(stats, 0, 1, "Net P&L")
+    table.cell(stats, 1, 1, str.tostring(strategy.netprofit, "#.##"))
+    table.cell(stats, 0, 2, "Profit Factor")
+    table.cell(stats, 1, 2, na(pf) ? "—" : str.tostring(pf, "#.##"))
+    table.cell(stats, 0, 3, "Win rate %")
+    table.cell(stats, 1, 3, na(wr) ? "—" : str.tostring(wr, "#.#"))
+    table.cell(stats, 0, 4, "Trades")
+    table.cell(stats, 1, 4, str.tostring(strategy.closedtrades))
