@@ -233,6 +233,15 @@ void OpenTrade(bool isLong, double atr)
    if(stopDist <= 0)
       return;
 
+   // Contrainte courtier : le stop ne peut pas etre plus proche que le
+   // "stops level". Critique en M1 ou l'ATR peut donner un stop minuscule,
+   // sinon l'ordre est rejete (invalid stops). On elargit au minimum requis.
+   double point       = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   long   stopsLvlPts = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minDist     = (stopsLvlPts + 5) * point; // +5 pts de marge de securite
+   if(stopDist < minDist)
+      stopDist = minDist;
+
    double sl = isLong ? price - stopDist : price + stopDist;
    double tp = isLong ? price + stopDist * InpRR : price - stopDist * InpRR;
 
