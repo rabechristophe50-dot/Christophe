@@ -37,7 +37,7 @@ cohérents, vous avez confiance dans la logique.
 1. TradingView → **Pine Editor** → collez
    `indicators/adaptive_trend_risk_strategy.pine` → *Add to chart*.
 2. Mettez le **même symbole et le même timeframe** que sur MT5
-   (ex. `OANDA:XAUUSD` en 15 min, `BINANCE:BTCUSD` ou `BTCUSD` en 1 h).
+   (ex. `OANDA:XAUUSD` en **M1**, `BINANCE:BTCUSD` ou `BTCUSD` en **M1**).
 3. Onglet **Strategy Tester** : comparez Profit Factor / Drawdown avec MT5.
 4. Réglez les paramètres à l'identique (EMA, ATR, R:R, risque).
 
@@ -47,40 +47,53 @@ cohérents, vous avez confiance dans la logique.
 
 ---
 
-## 4. Réglages recommandés de départ
+## 4. Réglages recommandés — SCALPING M1
 
-### 🥇 OR — XAUUSD (H1 conseillé)
+> 🚨 **Lisez ceci avant tout.** Le M1 est le timeframe le plus DUR pour être
+> rentable. Vos gains par trade sont petits, mais les **coûts restent les
+> mêmes** : sur l'or, un spread de 15–30 cents peut manger 20–40 % de votre
+> stop. **Sur M1, ce sont les frais qui décident, pas le signal.** Règle d'or :
+> ne scalpez que si votre **spread + commission** est petit devant votre stop
+> (voir §5). Sinon, aucun réglage ne vous sauvera.
 
-| Paramètre | Valeur |
-|---|---|
-| EMA rapide / lente | 21 / 55 |
-| ATR / Stop (× ATR) | 14 / **2.0** |
-| R:R | 2.0 |
-| Risque par trade | **0.5–1.0 %** |
-| Filtre volatilité (ATR % min) | 0.15 |
-| Filtre horaire | ON, session Londres/NY : 08–17 (heure serveur) |
-| Trailing ATR | ON (× 2.0) |
-
-L'or bouge fort sur l'ouverture de Londres et de New York. Le filtre horaire
-évite les heures asiatiques molles où les faux signaux dominent.
-
-### ₿ BTC — BTCUSD (H1 ou H4 conseillé)
+### 🥇 OR — XAUUSD (M1)
 
 | Paramètre | Valeur |
 |---|---|
-| EMA rapide / lente | 21 / 55 (ou 34 / 89 en H4) |
-| ATR / Stop (× ATR) | 14 / **2.5** |
-| R:R | 2.0 |
-| Risque par trade | **0.5 %** (BTC est très volatil) |
-| Filtre volatilité (ATR % min) | 0.4 |
-| Filtre horaire | **OFF** (le crypto trade 24/7) |
-| Trailing ATR | ON (× 2.5) |
+| EMA rapide / lente | **9 / 30** (réactif pour scalp) |
+| ATR / Stop (× ATR) | 14 / **1.5** |
+| R:R | **1.5** |
+| Risque par trade | **0.25–0.5 %** |
+| Repli max sur EMA (× ATR) | 0.3 |
+| Filtre volatilité (ATR % min) | **0.05** |
+| Filtre horaire | **ON** — chevauchement Londres/NY : 13–17 (heure serveur) |
+| Trailing ATR | ON (× 1.5) |
 
-Le BTC ne dort jamais : pas de filtre horaire. Sa volatilité est plus élevée →
-stop un peu plus large (× 2.5) et risque par trade plus prudent.
+Sur M1, ne tradez l'or **que** pendant les heures de forte liquidité
+(ouverture Londres, puis chevauchement Londres/NY). Hors de ces plages, le
+bruit et le spread relatif tuent le scalping. Le filtre horaire est
+**indispensable** ici.
 
-> Ces valeurs sont des **points de départ**, pas des réglages optimisés. Le seul
-> juge, c'est votre backtest out-of-sample + votre paper trading.
+### ₿ BTC — BTCUSD (M1)
+
+| Paramètre | Valeur |
+|---|---|
+| EMA rapide / lente | **9 / 30** |
+| ATR / Stop (× ATR) | 14 / **1.5** |
+| R:R | **1.5** |
+| Risque par trade | **0.25 %** (BTC + M1 = très nerveux) |
+| Repli max sur EMA (× ATR) | 0.3 |
+| Filtre volatilité (ATR % min) | **0.10** |
+| Filtre horaire | **OFF** (crypto 24/7) mais évitez les week-ends mous |
+| Trailing ATR | ON (× 1.5) |
+
+Le BTC scalpé en M1 génère beaucoup de signaux : le **filtre de volatilité**
+est votre meilleur ami pour ne trader que quand ça bouge vraiment.
+
+> Ces valeurs sont des **points de départ scalping**, pas des réglages
+> optimisés. Le seul juge reste votre backtest out-of-sample + votre démo.
+> Sur M1, backtestez **impérativement** en mode « chaque tick basé sur les
+> vrais ticks » — sinon le résultat est faux.
 
 ---
 
@@ -93,5 +106,11 @@ stop un peu plus large (× 2.5) et risque par trade plus prudent.
 - **Un seul trade à la fois** par symbole (par conception).
 - **Spread & slippage** : sur l'or et le BTC, le spread peut être large. Vérifiez
   que vos coûts réels ne mangent pas l'avantage vu en backtest.
+- **🔑 Le test du spread (spécial M1)** : avant de scalper, faites ce calcul.
+  Regardez votre spread actuel et la distance de stop (`ATR × 1.5`).
+  Si `spread ÷ distance_stop` dépasse **~10 %**, le scalping M1 n'est pas
+  viable chez ce courtier — les frais mangeront le bord statistique. Exemple :
+  stop de 2 $ sur l'or et spread de 0,30 $ → 15 % → **trop cher**. Cherchez un
+  compte à spread serré (ECN/raw) ou remontez de timeframe.
 - Ceci **n'est pas un conseil financier**. Vous êtes seul responsable de vos
   décisions de trading.
