@@ -26,6 +26,7 @@ input int    InpSlopeLen   = 5;       // Bougies pour la pente EMA
 input group "② Entree sur repli"
 input double InpPullbackAtr   = 0.5;  // Repli max sur EMA rapide (x ATR)
 input bool   InpRequireReject = true; // Exiger une bougie de rejet
+input bool   InpEntryEveryTick= false;// Entrer des qu'un tick valide (rapide) au lieu d'attendre la cloture
 
 //--- ③ Gestion du risque
 input group "③ Gestion du risque"
@@ -182,36 +183,45 @@ void OnTick()
    // ---- Gestion de la position ouverte (a chaque tick) ----
    ManageOpenPosition();
 
-   // ---- Detection nouvelle bougie (on trade sur bougie cloturee) ----
-   datetime curBar = iTime(_Symbol, PERIOD_CURRENT, 0);
-   if(curBar == g_lastBar)
-      return;
-   g_lastBar = curBar;
-
    if(HasPosition())
       return; // une seule position a la fois
 
-   CheckForEntry();
+   if(InpEntryEveryTick)
+   {
+      // Mode rapide : on evalue la bougie EN COURS (shift 0) a chaque tick.
+      // Plus reactif, mais moins fiable (repaint possible).
+      CheckForEntry(0);
+   }
+   else
+   {
+      // Mode fiable : on evalue seulement a la cloture d'une nouvelle bougie
+      // (shift 1 = derniere bougie fermee). Pas de repaint.
+      datetime curBar = iTime(_Symbol, PERIOD_CURRENT, 0);
+      if(curBar == g_lastBar)
+         return;
+      g_lastBar = curBar;
+      CheckForEntry(1);
+   }
 }
 
 //+------------------------------------------------------------------+
-//| Recherche d'un signal sur la derniere bougie cloturee (shift 1)  |
+//| Recherche d'un signal. sh=1 => bougie cloturee (fiable) ;         |
+//| sh=0 => bougie en cours (mode rapide, chaque tick).              |
 //+------------------------------------------------------------------+
-void CheckForEntry()
+void CheckForEntry(int sh)
 {
-   // Valeurs sur bougie cloturee
-   double emaFast1 = Buf(hEmaFast, 1);
-   double emaFastN = Buf(hEmaFast, 1 + InpSlopeLen);
-   double emaSlow1 = Buf(hEmaSlow, 1);
-   double atr1     = Buf(hAtr, 1);
-   double htf1     = Buf(hHtf, 1);
+   double emaFast1 = Buf(hEmaFast, sh);
+   double emaFastN = Buf(hEmaFast, sh + InpSlopeLen);
+   double emaSlow1 = Buf(hEmaSlow, sh);
+   double atr1     = Buf(hAtr, sh);
+   double htf1     = Buf(hHtf, sh);
    if(emaFast1==0 || emaSlow1==0 || atr1==0)
       return;
 
-   double close1 = iClose(_Symbol, PERIOD_CURRENT, 1);
-   double open1  = iOpen(_Symbol, PERIOD_CURRENT, 1);
-   double high1  = iHigh(_Symbol, PERIOD_CURRENT, 1);
-   double low1   = iLow(_Symbol, PERIOD_CURRENT, 1);
+   double close1 = iClose(_Symbol, PERIOD_CURRENT, sh);
+   double open1  = iOpen(_Symbol, PERIOD_CURRENT, sh);
+   double high1  = iHigh(_Symbol, PERIOD_CURRENT, sh);
+   double low1   = iLow(_Symbol, PERIOD_CURRENT, sh);
 
    double slope   = emaFast1 - emaFastN;
    bool   trendUp = (emaFast1 > emaSlow1) && (slope > 0);
