@@ -29,7 +29,9 @@ input bool   InpRequireReject = true; // Exiger une bougie de rejet
 
 //--- ③ Gestion du risque
 input group "③ Gestion du risque"
-input double InpRiskPerTrade = 1.0;   // Risque par trade (% du solde)
+input bool   InpUseFixedLot  = false; // Lot fixe (comme la video 0.01) au lieu du risque %
+input double InpFixedLot      = 0.01; // Volume fixe si InpUseFixedLot = true
+input double InpRiskPerTrade = 1.0;   // Risque par trade (% du solde) si lot NON fixe
 input int    InpAtrLen       = 14;    // Longueur ATR
 input double InpAtrMult       = 2.0;  // Stop Loss = ATR x
 input double InpRR            = 2.0;   // Ratio Risque:Recompense (TP)
@@ -123,23 +125,34 @@ bool HasPosition()
 //+------------------------------------------------------------------+
 double CalcLots(double stopDistance)
 {
-   double balance    = AccountInfoDouble(ACCOUNT_BALANCE);
-   double riskAmount = balance * (InpRiskPerTrade / 100.0);
-   double tickValue  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize   = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(stopDistance <= 0 || tickValue <= 0 || tickSize <= 0)
-      return(0.0);
-
-   double moneyPerLot = (stopDistance / tickSize) * tickValue; // perte pour 1 lot si stop touche
-   if(moneyPerLot <= 0)
-      return(0.0);
-
-   double lots = riskAmount / moneyPerLot;
-
    double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    if(step <= 0) step = 0.01;
+
+   double lots;
+
+   // Mode "lot fixe" (comme la video : SELL 0.01)
+   if(InpUseFixedLot)
+   {
+      lots = InpFixedLot;
+   }
+   else
+   {
+      // Mode "risque %" : lot calcule pour risquer InpRiskPerTrade % du solde
+      double balance    = AccountInfoDouble(ACCOUNT_BALANCE);
+      double riskAmount = balance * (InpRiskPerTrade / 100.0);
+      double tickValue  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize   = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      if(stopDistance <= 0 || tickValue <= 0 || tickSize <= 0)
+         return(0.0);
+
+      double moneyPerLot = (stopDistance / tickSize) * tickValue; // perte pour 1 lot si stop touche
+      if(moneyPerLot <= 0)
+         return(0.0);
+
+      lots = riskAmount / moneyPerLot;
+   }
 
    lots = MathFloor(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
