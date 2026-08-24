@@ -36,7 +36,8 @@ input int    InpAtrLen       = 14;    // Longueur ATR
 input double InpAtrMult       = 2.0;  // Stop Loss = ATR x
 input double InpRR            = 2.0;   // Ratio Risque:Recompense (TP)
 input bool   InpUseBE         = true; // Break-even a +1R
-input bool   InpUseTrail      = true; // Trailing stop ATR apres +1R
+input bool   InpUseTrail      = true; // Trailing stop ATR (SL suit le profit)
+input bool   InpTrailFromStart= false;// Suivre le SL des le debut (sans attendre +1R)
 input double InpTrailMult     = 2.0;  // Trailing = ATR x
 
 //--- ④ Filtres
@@ -325,7 +326,7 @@ void ManageOpenPosition()
          newSL = MathMax(curSL, g_entry);
          g_beMoved = true;
       }
-      if(InpUseTrail && g_beMoved && atr > 0)
+      if(InpUseTrail && (g_beMoved || InpTrailFromStart) && atr > 0)
          newSL = MathMax(newSL, bid - atr * InpTrailMult);
 
       newSL = NormalizeDouble(newSL, digits);
@@ -342,7 +343,7 @@ void ManageOpenPosition()
          newSL = (curSL == 0.0) ? g_entry : MathMin(curSL, g_entry);
          g_beMoved = true;
       }
-      if(InpUseTrail && g_beMoved && atr > 0)
+      if(InpUseTrail && (g_beMoved || InpTrailFromStart) && atr > 0)
       {
          double trailSL = ask + atr * InpTrailMult;
          newSL = (newSL == 0.0) ? trailSL : MathMin(newSL, trailSL);
