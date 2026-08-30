@@ -1,0 +1,394 @@
+//@version=6
+indicator("OPR — Asia / London / US + Dashboard", overlay=true,
+     max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 1 : ASIA
+// ══════════════════════════════════════════════
+grp1    = "── Session 1 · Asia"
+s1_on   = input.bool(true,                "Activer",           group=grp1)
+s1_lbl  = input.string("AS",             "Label",              group=grp1)
+s1_tz   = input.string("America/New_York","Timezone",          group=grp1)
+s1_sh   = input.int(20, "Début heure",   group=grp1, minval=0, maxval=23)
+s1_sm   = input.int(0,  "Début min",     group=grp1, minval=0, maxval=59)
+s1_eh   = input.int(20, "Fin heure",     group=grp1, minval=0, maxval=23)
+s1_em   = input.int(15, "Fin min",       group=grp1, minval=0, maxval=59)
+s1_xh   = input.int(0,  "Étend. heure",  group=grp1, minval=0, maxval=23)
+s1_xm   = input.int(0,  "Étend. min",    group=grp1, minval=0, maxval=59)
+s1_ext  = input.bool(false, "Étendre",    group=grp1)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 2 : LONDON
+// ══════════════════════════════════════════════
+grp2    = "── Session 2 · London"
+s2_on   = input.bool(true,               "Activer",            group=grp2)
+s2_lbl  = input.string("LN",            "Label",               group=grp2)
+s2_tz   = input.string("America/New_York", "Timezone",         group=grp2)
+s2_sh   = input.int(3,  "Début heure",  group=grp2, minval=0, maxval=23)
+s2_sm   = input.int(0,  "Début min",    group=grp2, minval=0, maxval=59)
+s2_eh   = input.int(3,  "Fin heure",    group=grp2, minval=0, maxval=23)
+s2_em   = input.int(15, "Fin min",      group=grp2, minval=0, maxval=59)
+s2_xh   = input.int(5, "Étend. heure", group=grp2, minval=0, maxval=23)
+s2_xm   = input.int(0,  "Étend. min",   group=grp2, minval=0, maxval=59)
+s2_ext  = input.bool(true, "Étendre",   group=grp2)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 3 : US
+// ══════════════════════════════════════════════
+grp3    = "── Session 3 · US"
+s3_on   = input.bool(true,                 "Activer",          group=grp3)
+s3_lbl  = input.string("US",              "Label",              group=grp3)
+s3_tz   = input.string("America/New_York","Timezone",           group=grp3)
+s3_sh   = input.int(9,  "Début heure",   group=grp3, minval=0, maxval=23)
+s3_sm   = input.int(30, "Début min",     group=grp3, minval=0, maxval=59)
+s3_eh   = input.int(9,  "Fin heure",     group=grp3, minval=0, maxval=23)
+s3_em   = input.int(45, "Fin min",       group=grp3, minval=0, maxval=59)
+s3_xh   = input.int(11, "Étend. heure",  group=grp3, minval=0, maxval=23)
+s3_xm   = input.int(0,  "Étend. min",    group=grp3, minval=0, maxval=59)
+s3_ext  = input.bool(true, "Étendre",    group=grp3)
+
+// ══════════════════════════════════════════════
+// INPUTS — STYLE COMMUN
+// ══════════════════════════════════════════════
+grpS     = "── Style"
+showMid  = input.bool(true,  "Midpoint",          group=grpS)
+showLbl  = input.bool(true,  "Labels sessions",   group=grpS)
+lw       = input.int(2, "Épaisseur lignes",        group=grpS, minval=1, maxval=4)
+lw_edge  = input.int(3, "Épaisseur bord gauche",   group=grpS, minval=1, maxval=6)
+
+// Couleurs S1 Asia — palette froide (nuit)
+col_hi1  = input.color(color.new(color.orange,  0), "S1 Haut",   group=grpS)
+col_lo1  = input.color(color.new(color.orange, 40), "S1 Bas",    group=grpS)
+col_mid1 = input.color(color.new(color.orange, 60), "S1 Mid",    group=grpS)
+col_box1 = input.color(color.new(color.orange, 92), "S1 Box",    group=grpS)
+
+// Couleurs S2 London — palette chaude (matin)
+col_hi2  = input.color(color.new(#f76809, 0), "S2 Haut",  group=grpS)
+col_lo2  = input.color(color.new(#e56640, 40), "S2 Bas",   group=grpS)
+col_mid2 = input.color(color.new(#f12416, 60), "S2 Mid",   group=grpS)
+col_box2 = input.color(color.new(color.orange, 92), "S2 Box",   group=grpS)
+
+// Couleurs S3 US — palette vive (après-midi)
+col_hi3  = input.color(color.new(color.aqua,  0), "S3 Haut",  group=grpS)
+col_lo3  = input.color(color.new(color.aqua, 40), "S3 Bas",   group=grpS)
+col_mid3 = input.color(color.new(color.aqua, 60), "S3 Mid",   group=grpS)
+col_box3 = input.color(color.new(color.aqua, 92), "S3 Box",   group=grpS)
+
+// ══════════════════════════════════════════════
+// INPUTS — RSI
+// ══════════════════════════════════════════════
+grpR    = "── RSI (dashboard)"
+rsiLen  = input.int(14,       "Longueur RSI", group=grpR, minval=1)
+rsiSrc  = input.source(close, "Source RSI",   group=grpR)
+rsiOB   = input.int(70,       "Surachat",     group=grpR, minval=50, maxval=100)
+rsiOS   = input.int(30,       "Survente",     group=grpR, minval=0,  maxval=50)
+
+// ══════════════════════════════════════════════
+// INPUTS — RISQUE / POSITION (calculateur SL & LOT)
+// ══════════════════════════════════════════════
+grpK      = "── Risque / Position"
+capital   = input.float(10000, "Capital",                    group=grpK, minval=0)
+riskMode  = input.string("%",  "Mode de risque", options=["%", "Montant"], group=grpK)
+riskPct   = input.float(1.0,   "Risque %",                   group=grpK, minval=0, step=0.1)
+riskAmtIn = input.float(100,   "Risque (montant)",           group=grpK, minval=0)
+ptValue   = input.float(1.0,   "Valeur d'1 point (par lot)", group=grpK, minval=0, step=0.1)
+slBasis   = input.string("Range complet", "Base du SL (OPR)", options=["Range complet", "Demi-range"], group=grpK)
+slRef     = input.string("Auto (dernière)", "OPR de référence (SL/LOT)", options=["Auto (dernière)", "Asia", "London", "US"], group=grpK)
+
+// ══════════════════════════════════════════════
+// INPUTS — DASHBOARD
+// ══════════════════════════════════════════════
+grpD     = "── Dashboard"
+showDash = input.bool(true, "Afficher le dashboard", group=grpD)
+dashTz   = input.string("America/New_York", "Timezone horloge", group=grpD)
+dashPosS = input.string("Haut droite", "Position", options=["Haut gauche","Haut droite","Bas gauche","Bas droite","Milieu droite"], group=grpD)
+dashSzS  = input.string("Normal", "Taille du texte", options=["Petit","Normal","Grand"], group=grpD)
+
+// ══════════════════════════════════════════════
+// ÉTAT GLOBAL
+// ══════════════════════════════════════════════
+var float s1Hi = na, var float s1Lo = na
+var bool  s1In = false, var bool s1Done = false
+var int   s1TS = na
+
+var float s2Hi = na, var float s2Lo = na
+var bool  s2In = false, var bool s2Done = false
+var int   s2TS = na
+
+var float s3Hi = na, var float s3Lo = na
+var bool  s3In = false, var bool s3Done = false
+var int   s3TS = na
+
+// ══════════════════════════════════════════════
+// HELPERS — DASHBOARD
+// ══════════════════════════════════════════════
+f_pos(s) =>
+    s == "Haut gauche"   ? position.top_left    :
+     s == "Haut droite"  ? position.top_right   :
+     s == "Bas gauche"   ? position.bottom_left :
+     s == "Bas droite"   ? position.bottom_right:
+     s == "Milieu droite"? position.middle_right: position.top_right
+
+f_sz(s) =>
+    s == "Petit" ? size.small : s == "Grand" ? size.large : size.normal
+
+f_num(x) => na(x) ? "—" : str.tostring(x, format.mintick)
+
+// ══════════════════════════════════════════════
+// FONCTION — dessin OPR amélioré
+// ══════════════════════════════════════════════
+f_draw(tS, tE, tX, rHi, rLo,
+       colHi, colLo, colMid, colBox,
+       lStyle, lbl, doExt) =>
+    if na(rHi) or na(rLo) or rHi <= rLo
+        false
+    else
+        tR  = doExt ? tX : tE
+        mid = (rHi + rLo) / 2.0
+
+        // Boîte de fond (remplie, transparente)
+        box.new(tS, rHi, tE, rLo,
+             xloc        = xloc.bar_time,
+             border_color= na,
+             bgcolor     = colBox)
+
+        // Bord gauche épais — marqueur visuel d'ouverture
+        line.new(tS, rHi, tS, rLo,
+             xloc  = xloc.bar_time,
+             color = colHi,
+             width = lw_edge)
+
+        // Ligne High — style configurable par session
+        line.new(tS, rHi, tR, rHi,
+             xloc  = xloc.bar_time,
+             color = colHi,
+             width = lw,
+             style = lStyle)
+
+        // Ligne Low
+        line.new(tS, rLo, tR, rLo,
+             xloc  = xloc.bar_time,
+             color = colLo,
+             width = lw,
+             style = lStyle)
+
+        // Midpoint
+        if showMid
+            line.new(tS, mid, tR, mid,
+                 xloc  = xloc.bar_time,
+                 color = colMid,
+                 width = 1,
+                 style = line.style_dotted)
+
+        // Label session — discret, en haut à gauche de la boîte
+        if showLbl
+            label.new(tS, rHi,
+                 text     = lbl,
+                 xloc     = xloc.bar_time,
+                 style    = label.style_label_right,
+                 color    = colBox,
+                 textcolor= colHi,
+                 size     = size.small)
+        true
+
+// ══════════════════════════════════════════════
+// BOUCLE — SESSION 1 · ASIA
+// ══════════════════════════════════════════════
+if s1_on
+    y1  = year(time,  s1_tz)
+    m1  = month(time, s1_tz)
+    d1  = dayofmonth(time, s1_tz)
+    tS1 = timestamp(s1_tz, y1, m1, d1, s1_sh, s1_sm)
+    tE1 = timestamp(s1_tz, y1, m1, d1, s1_eh, s1_em)
+    tX1 = timestamp(s1_tz, y1, m1, d1, s1_xh, s1_xm)
+
+    wasIn1 = s1In
+    s1In  := time >= tS1 and time < tE1
+
+    if s1In and not wasIn1
+        s1Hi := high, s1Lo := low
+        s1TS := tS1,  s1Done := false
+
+    if s1In
+        s1Hi := math.max(s1Hi, high)
+        s1Lo := math.min(s1Lo, low)
+
+    if wasIn1 and not s1In and not s1Done and not na(s1Hi)
+        f_draw(s1TS, tE1, tX1, s1Hi, s1Lo,
+               col_hi1, col_lo1, col_mid1, col_box1,
+               line.style_solid, s1_lbl, s1_ext)
+        s1Done := true
+
+// ══════════════════════════════════════════════
+// BOUCLE — SESSION 2 · LONDON
+// ══════════════════════════════════════════════
+if s2_on
+    y2  = year(time,  s2_tz)
+    m2  = month(time, s2_tz)
+    d2  = dayofmonth(time, s2_tz)
+    tS2 = timestamp(s2_tz, y2, m2, d2, s2_sh, s2_sm)
+    tE2 = timestamp(s2_tz, y2, m2, d2, s2_eh, s2_em)
+    tX2 = timestamp(s2_tz, y2, m2, d2, s2_xh, s2_xm)
+
+    wasIn2 = s2In
+    s2In  := time >= tS2 and time < tE2
+
+    if s2In and not wasIn2
+        s2Hi := high, s2Lo := low
+        s2TS := tS2,  s2Done := false
+
+    if s2In
+        s2Hi := math.max(s2Hi, high)
+        s2Lo := math.min(s2Lo, low)
+
+    if wasIn2 and not s2In and not s2Done and not na(s2Hi)
+        f_draw(s2TS, tE2, tX2, s2Hi, s2Lo,
+               col_hi2, col_lo2, col_mid2, col_box2,
+               line.style_dashed, s2_lbl, s2_ext)
+        s2Done := true
+
+// ══════════════════════════════════════════════
+// BOUCLE — SESSION 3 · US
+// ══════════════════════════════════════════════
+if s3_on
+    y3  = year(time,  s3_tz)
+    m3  = month(time, s3_tz)
+    d3  = dayofmonth(time, s3_tz)
+    tS3 = timestamp(s3_tz, y3, m3, d3, s3_sh, s3_sm)
+    tE3 = timestamp(s3_tz, y3, m3, d3, s3_eh, s3_em)
+    tX3 = timestamp(s3_tz, y3, m3, d3, s3_xh, s3_xm)
+
+    wasIn3 = s3In
+    s3In  := time >= tS3 and time < tE3
+
+    if s3In and not wasIn3
+        s3Hi := high, s3Lo := low
+        s3TS := tS3,  s3Done := false
+
+    if s3In
+        s3Hi := math.max(s3Hi, high)
+        s3Lo := math.min(s3Lo, low)
+
+    if wasIn3 and not s3In and not s3Done and not na(s3Hi)
+        f_draw(s3TS, tE3, tX3, s3Hi, s3Lo,
+               col_hi3, col_lo3, col_mid3, col_box3,
+               line.style_dotted, s3_lbl, s3_ext)
+        s3Done := true
+
+// ══════════════════════════════════════════════
+// RSI (pour le dashboard)
+// ══════════════════════════════════════════════
+rsiVal = ta.rsi(rsiSrc, rsiLen)
+
+// ══════════════════════════════════════════════
+// DASHBOARD — HEURE · OPR · RSI · SL · LOT
+// ══════════════════════════════════════════════
+var table dash = na
+
+if barstate.islast and showDash
+    // ── OPR de référence pour le calcul SL / LOT
+    float refHi = na
+    float refLo = na
+    string refN = ""
+    if slRef == "Asia"
+        refHi := s1Hi, refLo := s1Lo, refN := s1_lbl
+    else if slRef == "London"
+        refHi := s2Hi, refLo := s2Lo, refN := s2_lbl
+    else if slRef == "US"
+        refHi := s3Hi, refLo := s3Lo, refN := s3_lbl
+    else
+        // Auto : la session la plus récemment ouverte
+        int bt = na
+        if s1_on and not na(s1TS) and (na(bt) or s1TS >= bt)
+            bt := s1TS, refHi := s1Hi, refLo := s1Lo, refN := s1_lbl
+        if s2_on and not na(s2TS) and (na(bt) or s2TS >= bt)
+            bt := s2TS, refHi := s2Hi, refLo := s2Lo, refN := s2_lbl
+        if s3_on and not na(s3TS) and (na(bt) or s3TS >= bt)
+            bt := s3TS, refHi := s3Hi, refLo := s3Lo, refN := s3_lbl
+
+    // ── Calculateur de risque
+    float rangePts = (na(refHi) or na(refLo)) ? na : refHi - refLo
+    float slDist   = na(rangePts) ? na : (slBasis == "Demi-range" ? rangePts / 2.0 : rangePts)
+    float riskAmt  = riskMode == "%" ? capital * riskPct / 100.0 : riskAmtIn
+    float lotSize  = (na(slDist) or slDist <= 0 or ptValue <= 0) ? na : riskAmt / (slDist * ptValue)
+
+    // ── (Re)création du tableau
+    if not na(dash)
+        table.delete(dash)
+    dash := table.new(f_pos(dashPosS), 4, 11,
+         border_width = 1, border_color = color.new(color.gray, 60),
+         frame_width  = 1, frame_color  = color.new(color.gray, 40))
+
+    txtSz = f_sz(dashSzS)
+    cHead = color.new(#2962ff, 0)
+    cBg   = color.new(#1e222d, 10)
+    cBg2  = color.new(#2a2e39, 10)
+    cTxt  = color.white
+    cMut  = color.new(color.silver, 0)
+
+    // Titre
+    table.cell(dash, 0, 0, "📊 OPR DASHBOARD", text_color=color.white, text_size=txtSz, bgcolor=cHead)
+    table.merge_cells(dash, 0, 0, 3, 0)
+
+    // En-têtes du bloc sessions
+    table.cell(dash, 0, 1, "Session", text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 1, "High",    text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 2, 1, "Low",     text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 3, 1, "Range",   text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+
+    // Ligne Asia
+    rg1 = (na(s1Hi) or na(s1Lo)) ? na : s1Hi - s1Lo
+    table.cell(dash, 0, 2, s1_on ? s1_lbl : "—", text_color=col_hi1, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 1, 2, s1_on ? f_num(s1Hi) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 2, 2, s1_on ? f_num(s1Lo) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 3, 2, s1_on ? f_num(rg1)  : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    // Ligne London
+    rg2 = (na(s2Hi) or na(s2Lo)) ? na : s2Hi - s2Lo
+    table.cell(dash, 0, 3, s2_on ? s2_lbl : "—", text_color=col_hi2, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 1, 3, s2_on ? f_num(s2Hi) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 2, 3, s2_on ? f_num(s2Lo) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 3, 3, s2_on ? f_num(rg2)  : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    // Ligne US
+    rg3 = (na(s3Hi) or na(s3Lo)) ? na : s3Hi - s3Lo
+    table.cell(dash, 0, 4, s3_on ? s3_lbl : "—", text_color=col_hi3, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 1, 4, s3_on ? f_num(s3Hi) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 2, 4, s3_on ? f_num(s3Lo) : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash, 3, 4, s3_on ? f_num(rg3)  : "—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    // ── Lignes séparées : HEURE / RSI / SL / LOT / Risque
+    // HEURE
+    table.cell(dash, 0, 5, "HEURE", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 5, str.format_time(timenow, "HH:mm", dashTz), text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 5, 3, 5)
+
+    // RSI
+    rsiCol = rsiVal >= rsiOB ? color.new(color.red, 0) : rsiVal <= rsiOS ? color.new(color.lime, 0) : cTxt
+    table.cell(dash, 0, 6, "RSI " + str.tostring(rsiLen), text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 6, str.tostring(rsiVal, "#.0"), text_color=rsiCol, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 6, 3, 6)
+
+    // SL
+    slTxt = na(slDist) ? "—" : f_num(slDist) + " pts  (" + refN + ")"
+    table.cell(dash, 0, 7, "SL", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 7, slTxt, text_color=color.new(color.red, 0), text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 7, 3, 7)
+
+    // LOT
+    lotTxt = na(lotSize) ? "—" : str.tostring(lotSize, "#.##") + " lot"
+    table.cell(dash, 0, 8, "LOT", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 8, lotTxt, text_color=color.new(color.aqua, 0), text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 8, 3, 8)
+
+    // Niveaux SL (Long / Short) — info complémentaire
+    lvlTxt = (na(refHi) or na(refLo)) ? "—" : "L " + f_num(refLo) + "  /  S " + f_num(refHi)
+    table.cell(dash, 0, 9, "Niveaux", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 9, lvlTxt, text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 9, 3, 9)
+
+    // Risque appliqué
+    riskTxt = riskMode == "%" ? str.tostring(riskPct, "#.#") + "%  ≈ " + str.tostring(riskAmt, "#.##") : str.tostring(riskAmt, "#.##")
+    table.cell(dash, 0, 10, "Risque", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash, 1, 10, riskTxt, text_color=cMut, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash, 1, 10, 3, 10)

@@ -6,6 +6,23 @@ Stratégie de confluence combinant **Sweep de liquidité + IFVG + Cassure de tre
 |---|---|---|
 | `liquidity_sweep_ifvg_trendline.pine` | `indicator()` | Détection visuelle + labels + tableau + alertes LONG/SHORT |
 | `liquidity_sweep_ifvg_trendline_strategy.pine` | `strategy()` | Version backtestable avec entrées/sorties, SL/TP, statistiques |
+| `opr_sessions_dashboard.pine` | `indicator()` | Opening Ranges Asia/London/US + dashboard (HEURE, OPR, RSI, SL, LOT) |
+
+## OPR — Sessions + Dashboard
+
+`opr_sessions_dashboard.pine` trace les **Opening Ranges** (OPR) de 3 sessions
+configurables (Asia / London / US) sous forme de boîtes + lignes High/Low/Mid,
+et ajoute un **dashboard** en surimpression :
+
+- **HEURE** — horloge (timezone configurable)
+- **OPR** — High / Low / Range des 3 sessions
+- **RSI** — valeur courante, colorée selon surachat/survente
+- **SL** — distance de stop basée sur la range de l'OPR de référence (range complet ou demi-range)
+- **LOT** — taille de position calculée : `Risque ÷ (distance SL × valeur du point)`
+
+Réglages clés (groupe *Risque / Position*) : `capital`, mode de risque (% ou montant),
+`Valeur d'1 point (par lot)`, `Base du SL`, et `OPR de référence` (Auto = dernière
+session ouverte, ou Asia/London/US fixe).
 
 ## Logique de confluence
 
