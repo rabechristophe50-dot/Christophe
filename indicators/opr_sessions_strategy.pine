@@ -1,0 +1,401 @@
+//@version=6
+// =============================================================================
+//  OPR Sessions — STRATEGY (backtestable)
+// -----------------------------------------------------------------------------
+//  Stratégie de cassure d'Opening Range (OPR).
+//  - Détecte les OPR de 3 sessions (Asia / London / US) et les dessine.
+//  - Trade la cassure de l'OPR d'UNE session choisie (défaut : US).
+//    LONG  = clôture qui casse le HAUT de l'OPR.
+//    SHORT = clôture qui casse le BAS de l'OPR.
+//  - SL au côté opposé de l'OPR (ou ATR), TP en multiple du risque (R:R).
+//  - Taille de position calculée depuis le risque (capital + %/montant).
+//  - Filtres optionnels : RSI, tendance EMA. Fenêtre de trade = de la fin de
+//    l'OPR jusqu'à l'heure d'extension de la session.
+//  - Dashboard : HEURE, OPR (3 sessions), RSI, SL, LOT, position, P&L.
+// =============================================================================
+
+strategy("OPR Sessions Strategy", shorttitle="OPR Strat", overlay=true,
+     max_lines_count=500, max_boxes_count=500, max_labels_count=500,
+     initial_capital=10000, default_qty_type=strategy.fixed, default_qty_value=1,
+     commission_type=strategy.commission.percent, commission_value=0.04, slippage=2,
+     calc_on_every_tick=false, process_orders_on_close=true)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 1 : ASIA
+// ══════════════════════════════════════════════
+grp1    = "── Session 1 · Asia"
+s1_on   = input.bool(true,                "Activer",           group=grp1)
+s1_lbl  = input.string("AS",             "Label",              group=grp1)
+s1_tz   = input.string("America/New_York","Timezone",          group=grp1)
+s1_sh   = input.int(20, "Début heure",   group=grp1, minval=0, maxval=23)
+s1_sm   = input.int(0,  "Début min",     group=grp1, minval=0, maxval=59)
+s1_eh   = input.int(20, "Fin heure",     group=grp1, minval=0, maxval=23)
+s1_em   = input.int(15, "Fin min",       group=grp1, minval=0, maxval=59)
+s1_xh   = input.int(23, "Étend. heure",  group=grp1, minval=0, maxval=23)
+s1_xm   = input.int(59, "Étend. min",    group=grp1, minval=0, maxval=59)
+s1_ext  = input.bool(false, "Étendre",    group=grp1)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 2 : LONDON
+// ══════════════════════════════════════════════
+grp2    = "── Session 2 · London"
+s2_on   = input.bool(true,               "Activer",            group=grp2)
+s2_lbl  = input.string("LN",            "Label",               group=grp2)
+s2_tz   = input.string("America/New_York", "Timezone",         group=grp2)
+s2_sh   = input.int(3,  "Début heure",  group=grp2, minval=0, maxval=23)
+s2_sm   = input.int(0,  "Début min",    group=grp2, minval=0, maxval=59)
+s2_eh   = input.int(3,  "Fin heure",    group=grp2, minval=0, maxval=23)
+s2_em   = input.int(15, "Fin min",      group=grp2, minval=0, maxval=59)
+s2_xh   = input.int(5, "Étend. heure", group=grp2, minval=0, maxval=23)
+s2_xm   = input.int(0,  "Étend. min",   group=grp2, minval=0, maxval=59)
+s2_ext  = input.bool(true, "Étendre",   group=grp2)
+
+// ══════════════════════════════════════════════
+// INPUTS — SESSION 3 : US
+// ══════════════════════════════════════════════
+grp3    = "── Session 3 · US"
+s3_on   = input.bool(true,                 "Activer",          group=grp3)
+s3_lbl  = input.string("US",              "Label",              group=grp3)
+s3_tz   = input.string("America/New_York","Timezone",           group=grp3)
+s3_sh   = input.int(9,  "Début heure",   group=grp3, minval=0, maxval=23)
+s3_sm   = input.int(30, "Début min",     group=grp3, minval=0, maxval=59)
+s3_eh   = input.int(9,  "Fin heure",     group=grp3, minval=0, maxval=23)
+s3_em   = input.int(45, "Fin min",       group=grp3, minval=0, maxval=59)
+s3_xh   = input.int(11, "Étend. heure",  group=grp3, minval=0, maxval=23)
+s3_xm   = input.int(0,  "Étend. min",    group=grp3, minval=0, maxval=59)
+s3_ext  = input.bool(true, "Étendre",    group=grp3)
+
+// ══════════════════════════════════════════════
+// INPUTS — TRADING (cassure OPR)
+// ══════════════════════════════════════════════
+grpT       = "── Trading"
+tradeSessN = input.string("US", "Session à trader", options=["Asia","London","US"], group=grpT)
+allowLong  = input.bool(true,  "Autoriser LONG",  group=grpT)
+allowShort = input.bool(true,  "Autoriser SHORT", group=grpT)
+oneTrade   = input.bool(true,  "1 seul trade par OPR", group=grpT)
+
+grpRisk  = "── Risque / Position"
+slModeS  = input.string("OPR opposé", "Mode de Stop Loss", options=["OPR opposé","ATR"], group=grpRisk)
+atrMult  = input.float(1.5, "SL = ATR ×", minval=0.1, step=0.1, group=grpRisk)
+rr       = input.float(2.0, "Ratio Risque:Récompense (TP)", minval=0.1, step=0.1, group=grpRisk)
+useBE    = input.bool(true, "Break-even à +1R", group=grpRisk)
+capital  = input.float(10000, "Capital", group=grpRisk, minval=0)
+riskMode = input.string("%", "Mode de risque", options=["%","Montant"], group=grpRisk)
+riskPct  = input.float(1.0, "Risque %", group=grpRisk, minval=0, step=0.1)
+riskAmtIn= input.float(100, "Risque (montant)", group=grpRisk, minval=0)
+ptValue  = input.float(1.0, "Valeur d'1 point (par lot)", group=grpRisk, minval=0, step=0.1)
+
+grpFilt  = "── Filtres"
+useTrend = input.bool(false, "Filtre tendance EMA", group=grpFilt)
+emaLen   = input.int(200, "Longueur EMA", minval=1, group=grpFilt)
+useRsi   = input.bool(false, "Filtre RSI", group=grpFilt)
+rsiLong  = input.float(50, "RSI mini pour LONG", group=grpFilt)
+rsiShort = input.float(50, "RSI maxi pour SHORT", group=grpFilt)
+
+// ══════════════════════════════════════════════
+// INPUTS — RSI / STYLE / DASHBOARD
+// ══════════════════════════════════════════════
+grpR    = "── RSI (dashboard)"
+rsiLen  = input.int(14,       "Longueur RSI", group=grpR, minval=1)
+rsiSrc  = input.source(close, "Source RSI",   group=grpR)
+rsiOB   = input.int(70,       "Surachat",     group=grpR, minval=50, maxval=100)
+rsiOS   = input.int(30,       "Survente",     group=grpR, minval=0,  maxval=50)
+
+grpS     = "── Style"
+showMid  = input.bool(true,  "Midpoint",        group=grpS)
+showLbl  = input.bool(true,  "Labels sessions", group=grpS)
+lw       = input.int(2, "Épaisseur lignes",      group=grpS, minval=1, maxval=4)
+lw_edge  = input.int(3, "Épaisseur bord gauche", group=grpS, minval=1, maxval=6)
+col_hi1  = input.color(color.new(color.orange, 0), "S1 Haut", group=grpS)
+col_lo1  = input.color(color.new(color.orange,40), "S1 Bas",  group=grpS)
+col_mid1 = input.color(color.new(color.orange,60), "S1 Mid",  group=grpS)
+col_box1 = input.color(color.new(color.orange,92), "S1 Box",  group=grpS)
+col_hi2  = input.color(color.new(#f76809, 0), "S2 Haut", group=grpS)
+col_lo2  = input.color(color.new(#e56640,40), "S2 Bas",  group=grpS)
+col_mid2 = input.color(color.new(#f12416,60), "S2 Mid",  group=grpS)
+col_box2 = input.color(color.new(color.orange,92), "S2 Box", group=grpS)
+col_hi3  = input.color(color.new(color.aqua, 0), "S3 Haut", group=grpS)
+col_lo3  = input.color(color.new(color.aqua,40), "S3 Bas",  group=grpS)
+col_mid3 = input.color(color.new(color.aqua,60), "S3 Mid",  group=grpS)
+col_box3 = input.color(color.new(color.aqua,92), "S3 Box",  group=grpS)
+
+grpD     = "── Dashboard"
+showDash = input.bool(true, "Afficher le dashboard", group=grpD)
+dashTz   = input.string("America/New_York", "Timezone horloge", group=grpD)
+dashPosS = input.string("Haut droite", "Position", options=["Haut gauche","Haut droite","Bas gauche","Bas droite","Milieu droite"], group=grpD)
+dashSzS  = input.string("Normal", "Taille du texte", options=["Petit","Normal","Grand"], group=grpD)
+
+// ══════════════════════════════════════════════
+// ÉTAT GLOBAL DES SESSIONS
+// ══════════════════════════════════════════════
+var float s1Hi=na, var float s1Lo=na, var bool s1In=false, var bool s1Done=false
+var int   s1TS=na, var int s1TE=na, var int s1TX=na
+var float s2Hi=na, var float s2Lo=na, var bool s2In=false, var bool s2Done=false
+var int   s2TS=na, var int s2TE=na, var int s2TX=na
+var float s3Hi=na, var float s3Lo=na, var bool s3In=false, var bool s3Done=false
+var int   s3TS=na, var int s3TE=na, var int s3TX=na
+
+atr    = ta.atr(14)
+ema    = ta.ema(close, emaLen)
+rsiVal = ta.rsi(rsiSrc, rsiLen)
+
+// ══════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════
+f_pos(s) =>
+    s == "Haut gauche"   ? position.top_left    :
+     s == "Haut droite"  ? position.top_right   :
+     s == "Bas gauche"   ? position.bottom_left :
+     s == "Bas droite"   ? position.bottom_right:
+     s == "Milieu droite"? position.middle_right: position.top_right
+
+f_sz(s) => s == "Petit" ? size.small : s == "Grand" ? size.large : size.normal
+f_num(x) => na(x) ? "—" : str.tostring(x, format.mintick)
+
+f_draw(tS, tE, tX, rHi, rLo, colHi, colLo, colMid, colBox, lStyle, lbl, doExt) =>
+    if na(rHi) or na(rLo) or rHi <= rLo
+        false
+    else
+        tR  = doExt ? tX : tE
+        mid = (rHi + rLo) / 2.0
+        box.new(tS, rHi, tE, rLo, xloc=xloc.bar_time, border_color=na, bgcolor=colBox)
+        line.new(tS, rHi, tS, rLo, xloc=xloc.bar_time, color=colHi, width=lw_edge)
+        line.new(tS, rHi, tR, rHi, xloc=xloc.bar_time, color=colHi, width=lw, style=lStyle)
+        line.new(tS, rLo, tR, rLo, xloc=xloc.bar_time, color=colLo, width=lw, style=lStyle)
+        if showMid
+            line.new(tS, mid, tR, mid, xloc=xloc.bar_time, color=colMid, width=1, style=line.style_dotted)
+        if showLbl
+            label.new(tS, rHi, text=lbl, xloc=xloc.bar_time, style=label.style_label_right, color=colBox, textcolor=colHi, size=size.small)
+        true
+
+// ══════════════════════════════════════════════
+// DÉTECTION DES OPR (3 sessions)
+// ══════════════════════════════════════════════
+if s1_on
+    y  = year(time, s1_tz)
+    mo = month(time, s1_tz)
+    d  = dayofmonth(time, s1_tz)
+    tS = timestamp(s1_tz, y, mo, d, s1_sh, s1_sm)
+    tE = timestamp(s1_tz, y, mo, d, s1_eh, s1_em)
+    tX = timestamp(s1_tz, y, mo, d, s1_xh, s1_xm)
+    wasIn = s1In
+    s1In := time >= tS and time < tE
+    if s1In and not wasIn
+        s1Hi:=high, s1Lo:=low, s1TS:=tS, s1TE:=tE, s1TX:=tX, s1Done:=false
+    if s1In
+        s1Hi:=math.max(s1Hi,high), s1Lo:=math.min(s1Lo,low)
+    if wasIn and not s1In and not s1Done and not na(s1Hi)
+        f_draw(s1TS,tE,tX,s1Hi,s1Lo,col_hi1,col_lo1,col_mid1,col_box1,line.style_solid,s1_lbl,s1_ext)
+        s1Done:=true
+
+if s2_on
+    y  = year(time, s2_tz)
+    mo = month(time, s2_tz)
+    d  = dayofmonth(time, s2_tz)
+    tS = timestamp(s2_tz, y, mo, d, s2_sh, s2_sm)
+    tE = timestamp(s2_tz, y, mo, d, s2_eh, s2_em)
+    tX = timestamp(s2_tz, y, mo, d, s2_xh, s2_xm)
+    wasIn = s2In
+    s2In := time >= tS and time < tE
+    if s2In and not wasIn
+        s2Hi:=high, s2Lo:=low, s2TS:=tS, s2TE:=tE, s2TX:=tX, s2Done:=false
+    if s2In
+        s2Hi:=math.max(s2Hi,high), s2Lo:=math.min(s2Lo,low)
+    if wasIn and not s2In and not s2Done and not na(s2Hi)
+        f_draw(s2TS,tE,tX,s2Hi,s2Lo,col_hi2,col_lo2,col_mid2,col_box2,line.style_dashed,s2_lbl,s2_ext)
+        s2Done:=true
+
+if s3_on
+    y  = year(time, s3_tz)
+    mo = month(time, s3_tz)
+    d  = dayofmonth(time, s3_tz)
+    tS = timestamp(s3_tz, y, mo, d, s3_sh, s3_sm)
+    tE = timestamp(s3_tz, y, mo, d, s3_eh, s3_em)
+    tX = timestamp(s3_tz, y, mo, d, s3_xh, s3_xm)
+    wasIn = s3In
+    s3In := time >= tS and time < tE
+    if s3In and not wasIn
+        s3Hi:=high, s3Lo:=low, s3TS:=tS, s3TE:=tE, s3TX:=tX, s3Done:=false
+    if s3In
+        s3Hi:=math.max(s3Hi,high), s3Lo:=math.min(s3Lo,low)
+    if wasIn and not s3In and not s3Done and not na(s3Hi)
+        f_draw(s3TS,tE,tX,s3Hi,s3Lo,col_hi3,col_lo3,col_mid3,col_box3,line.style_dotted,s3_lbl,s3_ext)
+        s3Done:=true
+
+// ══════════════════════════════════════════════
+// SÉLECTION DE LA SESSION TRADÉE
+// ══════════════════════════════════════════════
+sHi   = tradeSessN=="Asia" ? s1Hi   : tradeSessN=="London" ? s2Hi   : s3Hi
+sLo   = tradeSessN=="Asia" ? s1Lo   : tradeSessN=="London" ? s2Lo   : s3Lo
+sDone = tradeSessN=="Asia" ? s1Done : tradeSessN=="London" ? s2Done : s3Done
+sTS   = tradeSessN=="Asia" ? s1TS   : tradeSessN=="London" ? s2TS   : s3TS
+sTE   = tradeSessN=="Asia" ? s1TE   : tradeSessN=="London" ? s2TE   : s3TE
+sTX   = tradeSessN=="Asia" ? s1TX   : tradeSessN=="London" ? s2TX   : s3TX
+
+// Fenêtre de trade : de la fin de l'OPR jusqu'à l'heure d'extension
+inTradeWin = sDone and not na(sHi) and not na(sTE) and not na(sTX) and time >= sTE and time <= sTX
+
+// ══════════════════════════════════════════════
+// SIGNAUX DE CASSURE
+// ══════════════════════════════════════════════
+var int tradedTS = na
+freshRange = na(tradedTS) or tradedTS != sTS
+canTrade   = inTradeWin and (not oneTrade or freshRange) and strategy.position_size == 0
+
+trendLongOk  = not useTrend or close > ema
+trendShortOk = not useTrend or close < ema
+rsiLongOk    = not useRsi or rsiVal >= rsiLong
+rsiShortOk   = not useRsi or rsiVal <= rsiShort
+
+longBreak  = canTrade and allowLong  and close > sHi and close[1] <= sHi and trendLongOk  and rsiLongOk
+shortBreak = canTrade and allowShort and close < sLo and close[1] >= sLo and trendShortOk and rsiShortOk
+
+// ══════════════════════════════════════════════
+// CALCUL DU RISQUE / SIZING
+// ══════════════════════════════════════════════
+riskAmt = riskMode == "%" ? capital * riskPct / 100.0 : riskAmtIn
+f_qty(dist) => (na(dist) or dist <= 0 or ptValue <= 0) ? na : riskAmt / (dist * ptValue)
+
+f_slLong()  => slModeS == "ATR" ? close - atr*atrMult : sLo
+f_slShort() => slModeS == "ATR" ? close + atr*atrMult : sHi
+
+// ══════════════════════════════════════════════
+// ENTRÉES / SORTIES
+// ══════════════════════════════════════════════
+var float entryPrice = na
+var float stopPrice  = na
+var float tpPrice    = na
+var bool  beMoved    = false
+
+if longBreak
+    entryPrice := close
+    stopPrice  := f_slLong()
+    dist       = entryPrice - stopPrice
+    if dist > 0
+        tpPrice := entryPrice + dist * rr
+        beMoved := false
+        qty     = f_qty(dist)
+        strategy.entry("L", strategy.long, qty=qty)
+        tradedTS := sTS
+
+if shortBreak
+    entryPrice := close
+    stopPrice  := f_slShort()
+    dist       = stopPrice - entryPrice
+    if dist > 0
+        tpPrice := entryPrice - dist * rr
+        beMoved := false
+        qty     = f_qty(dist)
+        strategy.entry("S", strategy.short, qty=qty)
+        tradedTS := sTS
+
+// Break-even à +1R
+if useBE and strategy.position_size > 0 and not beMoved and high >= entryPrice + (entryPrice - stopPrice)
+    stopPrice := entryPrice, beMoved := true
+if useBE and strategy.position_size < 0 and not beMoved and low <= entryPrice - (stopPrice - entryPrice)
+    stopPrice := entryPrice, beMoved := true
+
+if strategy.position_size > 0
+    strategy.exit("xL", from_entry="L", stop=stopPrice, limit=tpPrice)
+if strategy.position_size < 0
+    strategy.exit("xS", from_entry="S", stop=stopPrice, limit=tpPrice)
+
+// Marqueurs visuels
+plotshape(longBreak,  title="Cassure LONG",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.teal,0), size=size.small, text="L")
+plotshape(shortBreak, title="Cassure SHORT", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small, text="S")
+plot(strategy.position_size != 0 ? stopPrice : na, "SL", color=color.new(color.red,  0), style=plot.style_linebr)
+plot(strategy.position_size != 0 ? tpPrice  : na, "TP", color=color.new(color.green,0), style=plot.style_linebr)
+
+// ══════════════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════════════
+var table dash = na
+
+if barstate.islast and showDash
+    // SL/LOT prévisionnels pour le prochain trade (basés sur l'OPR tradée)
+    float nextDist = na
+    if not na(sHi) and not na(sLo)
+        nextDist := slModeS == "ATR" ? atr*atrMult : sHi - sLo
+    float nextLot = f_qty(nextDist)
+
+    if not na(dash)
+        table.delete(dash)
+    dash := table.new(f_pos(dashPosS), 4, 12,
+         border_width=1, border_color=color.new(color.gray,60),
+         frame_width=1,  frame_color=color.new(color.gray,40))
+
+    txtSz = f_sz(dashSzS)
+    cHead = color.new(#2962ff, 0)
+    cBg   = color.new(#1e222d, 10)
+    cBg2  = color.new(#2a2e39, 10)
+    cTxt  = color.white
+    cMut  = color.new(color.silver, 0)
+
+    table.cell(dash,0,0,"📊 OPR STRATEGY", text_color=color.white, text_size=txtSz, bgcolor=cHead)
+    table.merge_cells(dash,0,0,3,0)
+
+    table.cell(dash,0,1,"Session", text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,1,"High",    text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,2,1,"Low",     text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,3,1,"Range",   text_color=cTxt, text_size=txtSz, bgcolor=cBg2)
+
+    rg1 = (na(s1Hi) or na(s1Lo)) ? na : s1Hi-s1Lo
+    table.cell(dash,0,2, s1_on?s1_lbl:"—",  text_color=col_hi1, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,1,2, s1_on?f_num(s1Hi):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,2,2, s1_on?f_num(s1Lo):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,3,2, s1_on?f_num(rg1):"—",  text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    rg2 = (na(s2Hi) or na(s2Lo)) ? na : s2Hi-s2Lo
+    table.cell(dash,0,3, s2_on?s2_lbl:"—",  text_color=col_hi2, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,1,3, s2_on?f_num(s2Hi):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,2,3, s2_on?f_num(s2Lo):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,3,3, s2_on?f_num(rg2):"—",  text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    rg3 = (na(s3Hi) or na(s3Lo)) ? na : s3Hi-s3Lo
+    table.cell(dash,0,4, s3_on?s3_lbl:"—",  text_color=col_hi3, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,1,4, s3_on?f_num(s3Hi):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,2,4, s3_on?f_num(s3Lo):"—", text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.cell(dash,3,4, s3_on?f_num(rg3):"—",  text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+
+    // HEURE
+    table.cell(dash,0,5,"HEURE", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,5, str.format_time(timenow,"HH:mm",dashTz), text_color=cTxt, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,5,3,5)
+
+    // RSI
+    rsiCol = rsiVal>=rsiOB ? color.new(color.red,0) : rsiVal<=rsiOS ? color.new(color.lime,0) : cTxt
+    table.cell(dash,0,6,"RSI "+str.tostring(rsiLen), text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,6, str.tostring(rsiVal,"#.0"), text_color=rsiCol, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,6,3,6)
+
+    // SL
+    inPos  = strategy.position_size != 0
+    slTxt  = inPos and not na(stopPrice) ? f_num(stopPrice) : (na(nextDist) ? "—" : f_num(nextDist)+" pts ("+tradeSessN+")")
+    table.cell(dash,0,7,"SL", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,7, slTxt, text_color=color.new(color.red,0), text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,7,3,7)
+
+    // LOT
+    lotTxt = inPos ? str.tostring(math.abs(strategy.position_size),"#.##")+" lot" : (na(nextLot) ? "—" : str.tostring(nextLot,"#.##")+" lot")
+    table.cell(dash,0,8,"LOT", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,8, lotTxt, text_color=color.new(color.aqua,0), text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,8,3,8)
+
+    // Position
+    posTxt = strategy.position_size>0 ? "LONG" : strategy.position_size<0 ? "SHORT" : "flat"
+    posCol = strategy.position_size>0 ? color.new(color.lime,0) : strategy.position_size<0 ? color.new(color.red,0) : cMut
+    table.cell(dash,0,9,"Position", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,9, posTxt, text_color=posCol, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,9,3,9)
+
+    // P&L ouvert
+    plCol = strategy.openprofit>=0 ? color.new(color.lime,0) : color.new(color.red,0)
+    table.cell(dash,0,10,"P&L", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,10, str.tostring(strategy.openprofit,"#.##"), text_color=plCol, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,10,3,10)
+
+    // Risque appliqué
+    riskTxt = riskMode=="%" ? str.tostring(riskPct,"#.#")+"%  ≈ "+str.tostring(riskAmt,"#.##") : str.tostring(riskAmt,"#.##")
+    table.cell(dash,0,11,"Risque", text_color=cMut, text_size=txtSz, bgcolor=cBg2)
+    table.cell(dash,1,11, riskTxt, text_color=cMut, text_size=txtSz, bgcolor=cBg)
+    table.merge_cells(dash,1,11,3,11)

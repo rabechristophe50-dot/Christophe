@@ -7,6 +7,7 @@ Stratégie de confluence combinant **Sweep de liquidité + IFVG + Cassure de tre
 | `liquidity_sweep_ifvg_trendline.pine` | `indicator()` | Détection visuelle + labels + tableau + alertes LONG/SHORT |
 | `liquidity_sweep_ifvg_trendline_strategy.pine` | `strategy()` | Version backtestable avec entrées/sorties, SL/TP, statistiques |
 | `opr_sessions_dashboard.pine` | `indicator()` | Opening Ranges Asia/London/US + dashboard (HEURE, OPR, RSI, SL, LOT) |
+| `opr_sessions_strategy.pine` | `strategy()` | Cassure d'OPR backtestable : entrées/sorties, SL/TP, sizing par risque + dashboard |
 
 ## OPR — Sessions + Dashboard
 
@@ -23,6 +24,24 @@ et ajoute un **dashboard** en surimpression :
 Réglages clés (groupe *Risque / Position*) : `capital`, mode de risque (% ou montant),
 `Valeur d'1 point (par lot)`, `Base du SL`, et `OPR de référence` (Auto = dernière
 session ouverte, ou Asia/London/US fixe).
+
+## OPR — Stratégie backtestable
+
+`opr_sessions_strategy.pine` reprend la logique OPR et ajoute des **entrées/sorties
+réelles** pour un backtest TradingView :
+
+- **Entrée** : cassure en clôture du haut (LONG) ou du bas (SHORT) de l'OPR de la
+  session choisie (`Session à trader`, défaut US), pendant la fenêtre allant de la
+  fin de l'OPR jusqu'à l'heure d'extension.
+- **Stop Loss** : côté opposé de l'OPR (ou ATR ×).
+- **Take Profit** : multiple du risque (`R:R`), option break-even à +1R.
+- **Sizing** : LOT = `Risque ÷ (distance SL × valeur du point)` — le risque par trade
+  est piloté par `capital` + `%`/montant.
+- **Filtres** : tendance EMA, RSI. `1 seul trade par OPR` pour éviter le sur-trading.
+
+Le **Strategy Tester** de TradingView donne alors winrate, profit factor, drawdown, etc.
+⚠️ À utiliser en **intraday** ; la session tradée par défaut est US (9:30) pour éviter
+les fenêtres qui passent minuit.
 
 ## Logique de confluence
 
